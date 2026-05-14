@@ -1,0 +1,26 @@
+# Node / build artefacts
+node_modules/
+dist/
+*.tsbuildinfo
+.npm/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# E2E provisioning artefacts — contain real ACN API keys and HMAC secrets
+# (look at scripts/provision-e2e.mjs and scripts/e2e-*.mjs to regenerate).
+scripts/e2e-state.json
