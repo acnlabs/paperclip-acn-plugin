@@ -28,9 +28,9 @@ ACN (L1 Identity + Routing + L3 Settlement)
 ```
 
 The plugin runs inside Paperclip's plugin worker sandbox. It uses the official
-[`acn-client`](../acn/clients/typescript) TypeScript SDK to call ACN's REST API,
-and consumes ACN's per-subnet **Org Harness** webhook to receive task lifecycle
-events.
+[`acn-client`](https://www.npmjs.com/package/acn-client) TypeScript SDK to call
+ACN's REST API, and consumes ACN's per-subnet **Org Harness** webhook to
+receive task lifecycle events.
 
 ### Agent topology
 
@@ -50,38 +50,23 @@ events.
 - An ACN **subnet** owned by that agent (the plugin will register itself as the subnet's Org Harness)
 - A shared **HMAC secret** for signing harness webhook deliveries (any high-entropy random string, e.g. `openssl rand -hex 32`)
 
-### 1. Build the plugin
+### 1. Install into Paperclip
 
 ```bash
+paperclipai plugin install @acnlabs/paperclip-plugin-acn
+```
+
+This pulls the latest release from npm and registers it with the local Paperclip instance. Alternatively, for a working-copy install (useful while developing the plugin itself):
+
+```bash
+git clone https://github.com/acnlabs/paperclip-acn-plugin.git
 cd paperclip-acn-plugin
 npm install
-npm run build
+npm run build         # produces dist/manifest.js, dist/worker.js, dist/ui/index.js
+paperclipai plugin install ./
 ```
 
-This produces:
-
-```
-dist/manifest.js   # plugin manifest
-dist/worker.js     # worker entry (sandboxed)
-dist/ui/index.js   # ACN issue-tab UI bundle
-```
-
-### 2. Install into Paperclip
-
-```bash
-curl -X POST http://localhost:3100/api/plugins/install \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source": {
-      "type": "local",
-      "path": "/absolute/path/to/paperclip-acn-plugin"
-    }
-  }'
-```
-
-Or place the built plugin directory in Paperclip's configured plugin directory and restart.
-
-### 3. Configure the plugin
+### 2. Configure the plugin
 
 Paperclip → **Instance Settings → Plugins → ACN**:
 
@@ -95,7 +80,7 @@ Paperclip → **Instance Settings → Plugins → ACN**:
 | `autoCreateIssues` | no (default `true`) | Auto-create Paperclip issues for new ACN tasks |
 | `autoApproveOnDone` | no (default `false`) | When a Paperclip user moves an ACN-linked issue to `done`, automatically call `/review?approved=true` and release payment. Off by default — keeps a human in the loop. |
 
-### 4. Verify
+### 3. Verify
 
 On worker startup the plugin:
 
@@ -158,7 +143,18 @@ npm run build      # full build: tsc + esbuild UI bundle
 npm run typecheck  # tsc --noEmit
 ```
 
-The plugin is purely runtime-typed against `@paperclipai/plugin-sdk` and `acn-client`. To work against a local SDK checkout, the `package.json` already pins `acn-client` to `file:../acn/clients/typescript`.
+The plugin is runtime-typed against `@paperclipai/plugin-sdk` and `acn-client`, both pulled from npm. To work against a local SDK checkout, point the `acn-client` dependency at a sibling working tree (e.g. `npm install ../acn/clients/typescript`) — but remember to revert before releasing.
+
+### End-to-end smoke
+
+The `scripts/` folder ships three live integration probes against a running ACN + Paperclip pair:
+
+```bash
+node scripts/provision-e2e.mjs                # one-shot setup (bridge agent + subnet + secrets)
+node scripts/e2e-lifecycle.mjs                # PC issue ↔ ACN task full path todo → done
+node scripts/e2e-acn-to-paperclip.mjs         # external ACN task → PC mirror issue
+node scripts/e2e-paperclip-to-acn.mjs         # PC issue → ACN task + echo-loop guard
+```
 
 ## License
 
