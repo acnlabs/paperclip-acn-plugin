@@ -142,7 +142,7 @@ async function partB() {
     }),
   });
   await jsonFetch(
-    `${acnUrl}/api/v1/subnets/${external.agent_id}/subnets/${subnetId}`,
+    `${acnUrl}/api/v1/agents/${external.agent_id}/subnets/${subnetId}`,
     { method: "POST", headers: { Authorization: `Bearer ${external.api_key}` } },
   );
 

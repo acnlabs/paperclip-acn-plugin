@@ -81,10 +81,9 @@ async function pollAcnTaskFor(predicate, label) {
 }
 
 async function joinSubnetAsAgent(agentId, agentKey) {
-  // Note: path is /api/v1/subnets/{agent_id}/subnets/{subnet_id} (ACN router
-  // prefix bug — tracked separately). SDK joinSubnet() also has wrong path.
+  // Canonical agent-side route since ACN backend PR #42 / acn-client 0.11.2.
   await jsonFetch(
-    `${acnUrl}/api/v1/subnets/${agentId}/subnets/${subnetId}`,
+    `${acnUrl}/api/v1/agents/${agentId}/subnets/${subnetId}`,
     { method: "POST", headers: { Authorization: `Bearer ${agentKey}` } },
   );
 }

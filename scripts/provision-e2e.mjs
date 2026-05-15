@@ -95,11 +95,8 @@ async function main() {
   // task requires membership, so the bridge needs to explicitly join even
   // though it created the subnet. Tracked as separate ACN backend TODO.
   step("bridge joins subnet (workaround for owner-not-member)");
-  // Note real path is `/api/v1/subnets/{agent_id}/subnets/{subnet_id}` —
-  // ACN router prefix mismatch (the `subnets` router owns this agent-side
-  // endpoint). SDK `joinSubnet()` currently posts to the wrong URL and
-  // needs fixing separately; tracked in ACN client TODO.
-  await jsonFetch(`${ACN_URL}/api/v1/subnets/${bridge.agent_id}/subnets/${subnet.subnet_id}`, {
+  // Canonical agent-side route since ACN backend PR #42 / acn-client 0.11.2.
+  await jsonFetch(`${ACN_URL}/api/v1/agents/${bridge.agent_id}/subnets/${subnet.subnet_id}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${bridge.api_key}` },
   });

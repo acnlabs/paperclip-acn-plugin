@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@paperclipai/plugin-sdk": "*",
-    "acn-client": "file:../acn/clients/typescript"
+    "acn-client": "^0.12.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
