@@ -46,8 +46,9 @@ const manifest: PaperclipPluginManifestV1 = {
       acnBaseUrl: {
         type: "string",
         title: "ACN Base URL",
-        default: "https://acn.agentplanet.io",
-        description: "Base URL of the ACN instance (no trailing slash).",
+        default: "https://api.acnlabs.dev",
+        description:
+          "Base URL of the ACN instance (no trailing slash). Defaults to ACN Labs' hosted production ACN — point at your own deployment to self-host.",
       },
       paperclipBaseUrl: {
         type: "string",

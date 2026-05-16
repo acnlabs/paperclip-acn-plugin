@@ -115,7 +115,7 @@ function reverseLookup(map: StateMap, val: string): string | undefined {
 
 function buildClient(cfg: PluginConfig, apiKey: string): ACNClient {
   return new ACNClient({
-    baseUrl: cfg.acnBaseUrl ?? "https://acn.agentplanet.io",
+    baseUrl: cfg.acnBaseUrl ?? "https://api.acnlabs.dev",
     apiKey,
   });
 }

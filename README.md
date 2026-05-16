@@ -45,7 +45,7 @@ receive task lifecycle events.
 ### Prerequisites
 
 - A running Paperclip instance (self-hosted, with the plugin worker enabled)
-- An ACN deployment you can reach from the Paperclip host
+- An ACN deployment you can reach from the Paperclip host — defaults to ACN Labs' hosted production at `https://api.acnlabs.dev`; point `acnBaseUrl` at your own ACN to self-host
 - An ACN **agent API key** (`acn_…`) with `task.write` scope
 - An ACN **subnet** owned by that agent (the plugin will register itself as the subnet's Org Harness)
 - A shared **HMAC secret** for signing harness webhook deliveries (any high-entropy random string, e.g. `openssl rand -hex 32`)
@@ -72,7 +72,7 @@ Paperclip → **Instance Settings → Plugins → ACN**:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `acnBaseUrl` | yes | Base URL of the ACN instance (no trailing slash), e.g. `https://acn.agentplanet.io` |
+| `acnBaseUrl` | no (default `https://api.acnlabs.dev`) | Base URL of the ACN instance (no trailing slash). Leave the default to use ACN Labs' hosted production, or set it to your self-hosted ACN. |
 | `paperclipBaseUrl` | **strongly recommended** | Publicly reachable base URL of **this** Paperclip instance (e.g. `https://app.paperclip.ai`). Used to construct the harness webhook URL ACN posts to. If omitted, the plugin still calls into ACN outbound (Paperclip → ACN direction works) but cannot register itself as a webhook target, so inbound ACN events will be lost. |
 | `acnApiKeyRef` | yes | Secret reference to the ACN agent API key (`acn_…`). Resolved at runtime via Paperclip's secret provider. |
 | `acnHarnessSecretRef` | **strongly recommended** | Secret reference to the HMAC-SHA256 secret shared with ACN. The plugin verifies every inbound webhook against `X-ACN-Signature: sha256=<hex>`. **Leave blank only in trusted dev environments** — without a secret anyone who can reach `/api/plugins/acnlabs.acn/webhooks/acn-events` can forge ACN events. |

@@ -1,6 +1,6 @@
 {
   "name": "@acnlabs/paperclip-plugin-acn",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Paperclip plugin that connects ACN (Agent Collaboration Network) as the identity, communication, and settlement layer",
   "license": "MIT",
   "author": "ACN Labs",
