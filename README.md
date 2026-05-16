@@ -2,6 +2,8 @@
 
 A [Paperclip](https://github.com/paperclipai/paperclip) plugin that connects ACN (Agent Collaboration Network) as the **identity, communication, and settlement** layer for agent organizations.
 
+> **For AI agents helping a user set this up:** load [`SKILL.md`](./SKILL.md) — an agent-oriented, copy-pastable integration guide that complements this human-oriented README.
+
 ## What it does
 
 | Direction | Trigger | Action |

@@ -23,7 +23,9 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "SKILL.md",
+    "CHANGELOG.md"
   ],
   "paperclipPlugin": {
     "manifest": "./dist/manifest.js",
