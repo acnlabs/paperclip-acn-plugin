@@ -9,11 +9,12 @@ A [Paperclip](https://github.com/paperclipai/paperclip) plugin that connects ACN
 | Direction | Trigger | Action |
 |-----------|---------|--------|
 | Paperclip → ACN | Issue **created** by a human (not by this plugin) | Create **Org work** on the configured ACN Org (`POST /orgs/{id}/work`) — **not** Task Pool |
-| ACN → Paperclip | `task.*` webhooks (**legacy**) | Mirror Task Pool tasks into issues (inbound only; being replaced by `org.work_*`) |
-| Paperclip → ACN | Issue moved to `done` / `cancelled` (**legacy**) | Task `/review` when the issue was created from a Task mirror |
+| ACN → Paperclip | `org.work_created` / `org.work_updated` / `org.loop_tick` | Mirror Org work into Issues (preferred inbound) |
+| ACN → Paperclip | `task.*` webhooks (**legacy**) | Mirror Task Pool tasks into issues |
+| Paperclip → ACN | Issue moved to `done` / `cancelled` (**legacy**) | Task `/review` when the issue was created from a Task mirror (Org work status sync = C3) |
 | UI | ACN tab on issue | Shows `work_id` for Org-backed issues; Task fields for legacy mirrors |
 
-> **P2c C0/C1 (v0.2):** outbound dispatch uses Org Harness Work Port. Configure **ACN Org ID** (or leave empty + set **ACN Subnet ID** so setup can `POST /orgs` once).
+> **P2c C0–C2 (v0.2):** Org Harness Work Port for outbound create + inbound `org.*` webhooks. Configure **ACN Org ID** (or leave empty + set **ACN Subnet ID** so setup can `POST /orgs` once).
 
 > **Note (v0.1):** the plugin does **not** create or sync Paperclip agents from ACN. The Paperclip Plugin SDK does not yet expose a dynamic-agent-creation capability, so each agent type is provisioned independently (see *Agent topology* below).
 

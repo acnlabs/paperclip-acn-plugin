@@ -106,6 +106,14 @@ Copy the logged `org_id` into `acnOrgId` for stable restarts.
 
 State: company-scoped `issue-work-map` (`work_id` → issue id).
 
+### ACN → Paperclip (preferred)
+
+| Event | Effect |
+|---|---|
+| `org.work_created` | Create Issue + `issue-work-map` (skipped if we just created the work outbound) |
+| `org.work_updated` | Sync Issue status (`todo`/`done`/`cancelled`); `in_progress` → comment only |
+| `org.loop_tick` | Comment on mapped open Issues (no L1 wakeup) |
+
 ### ACN → Paperclip (legacy)
 
 | Event | Effect |
@@ -113,7 +121,7 @@ State: company-scoped `issue-work-map` (`work_id` → issue id).
 | `task.*` / `participation.*` | Mirror into Issues (same as 0.1.x) |
 
 Issue done/cancelled → Task review only when the issue was Task-mirrored.
-Org-work-only issues do **not** call Task APIs yet (C3).
+Org-work-only issues do **not** PATCH Org work status yet (C3).
 
 ---
 

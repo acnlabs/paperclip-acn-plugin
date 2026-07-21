@@ -7,6 +7,7 @@
  *  P0-3  ACN→PC   : task.* webhook events → sync Paperclip issue status / comments (legacy)
  *  P0-4  PC→ACN   : Paperclip issue done/cancelled → ACN task review (legacy)
  *  P2c-C1 PC→ACN  : Paperclip issue created → Org work (NOT Task Pool)
+ *  P2c-C2 ACN→PC  : org.work_* / org.loop_tick → Issues (preferred inbound)
  */
 
 import type { PluginContext, PluginEvent } from "@paperclipai/plugin-sdk";
@@ -37,32 +38,40 @@ export interface PluginConfig {
 
 /**
  * Envelope sent by ACN's WebhookService (WebhookPayload model).
- * `data` fields vary per event — task events use one shape,
- * participation events use another.
+ *
+ * For Org Harness events, `task_id` is overloaded to carry `org_id` — always
+ * read work/org fields from `data`, never treat `task_id` as a Task Pool id
+ * when `event` starts with `org.`.
  */
-interface AcnTaskEventPayload {
+interface AcnHarnessEventPayload {
   event: string;
   timestamp?: string;
-  task_id: string;
-  /** Task-level event data (task.created / task.accepted / task.submitted / ...) */
+  /** Task Pool task id, or org_id for org.* events (legacy field name). */
+  task_id?: string;
   data: {
+    // Shared / task.*
     status?: string;
     creator_id?: string;
-    /** Assigned agent ID — present on task.accepted */
     assignee_id?: string;
     reward?: string;
     reward_currency?: string;
     subnet_id?: string;
     max_participants?: number;
-    // Participation-level event data (participation.rejected)
     participation_id?: string;
-    /** ACN agent ID of the participant */
     participant_id?: string;
     participant_name?: string;
     participation_status?: string;
     resubmit_count?: number;
     max_resubmit_attempts?: number;
     rejection_reason?: string;
+    // org.*
+    org_id?: string;
+    work_id?: string;
+    title?: string;
+    assignee_agent_id?: string | null;
+    open_count?: number;
+    work_ids?: string[];
+    assignees?: string[];
   };
 }
 
@@ -78,9 +87,29 @@ let _harnessSecret: string | null = null;
 /**
  * ACN agent_id of the API key the plugin is configured with. Used to detect
  * — and skip — webhook events fired for tasks the plugin itself just
- * created (legacy Task path). Org work create does not emit task.created.
+ * created (legacy Task path).
  */
 let _selfAgentId: string | null = null;
+/**
+ * work_ids we just created via C1 outbound. Closes the race where
+ * `org.work_created` arrives before `issue-work-map` is persisted.
+ */
+const _recentOutboundWorkIds = new Set<string>();
+const RECENT_OUTBOUND_CAP = 200;
+
+/** Mark a work_id as outbound so inbound org.work_created skips echo. */
+export function noteRecentOutboundWork(workId: string): void {
+  _recentOutboundWorkIds.add(workId);
+  if (_recentOutboundWorkIds.size > RECENT_OUTBOUND_CAP) {
+    const first = _recentOutboundWorkIds.values().next().value;
+    if (first !== undefined) _recentOutboundWorkIds.delete(first);
+  }
+}
+
+/** Test helper — clear the outbound echo set. */
+export function clearRecentOutboundWorkForTests(): void {
+  _recentOutboundWorkIds.clear();
+}
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 
@@ -322,6 +351,160 @@ async function syncTasks(
   return updated;
 }
 
+// ── Org work inbound (P2c-C2) ─────────────────────────────────────────────────
+
+function workIssueDescription(data: AcnHarnessEventPayload["data"]): string {
+  const lines: string[] = [];
+  if (data.work_id) lines.push(`**ACN Work ID:** \`${data.work_id}\``);
+  if (data.org_id) lines.push(`**ACN Org ID:** \`${data.org_id}\``);
+  if (data.assignee_agent_id) {
+    lines.push(`**Assignee:** \`${data.assignee_agent_id}\``);
+  }
+  return lines.join("\n");
+}
+
+function configuredOrgId(cfg: PluginConfig): string {
+  return (cfg.acnOrgId ?? "").trim();
+}
+
+export async function handleOrgWorkCreated(
+  ctx: PluginContext,
+  cfg: PluginConfig,
+  companyId: string,
+  data: AcnHarnessEventPayload["data"],
+): Promise<void> {
+  const orgId = configuredOrgId(cfg);
+  const eventOrgId = (data.org_id ?? "").trim();
+  if (!orgId || !eventOrgId || eventOrgId !== orgId) {
+    ctx.logger.debug("acn-plugin: org.work_created skipped — org mismatch", {
+      event_org: eventOrgId || null,
+      configured_org: orgId || null,
+    });
+    return;
+  }
+
+  const workId = (data.work_id ?? "").trim();
+  if (!workId) return;
+
+  if (_recentOutboundWorkIds.has(workId)) {
+    ctx.logger.info("acn-plugin: skipping org.work_created (outbound echo)", {
+      work_id: workId,
+    });
+    return;
+  }
+
+  const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+  if (workMap[workId]) {
+    ctx.logger.info("acn-plugin: skipping org.work_created (already mapped)", {
+      work_id: workId,
+      issue_id: workMap[workId],
+    });
+    return;
+  }
+
+  if (!cfg.autoCreateIssues) return;
+
+  const issue = await ctx.issues.create({
+    companyId,
+    title: `[ACN] ${data.title ?? workId}`,
+    description: workIssueDescription(data),
+    status: "todo",
+    originKind: `plugin:${PLUGIN_ID}:work` as `plugin:${string}`,
+    originId: workId,
+  });
+  const fresh = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+  fresh[workId] = issue.id;
+  await saveMap(ctx, STATE_KEYS.issueWorkMap, companyId, fresh);
+  ctx.logger.info("acn-plugin: org.work_created → issue created", {
+    work_id: workId,
+    issue_id: issue.id,
+    org_id: orgId,
+  });
+}
+
+export async function handleOrgWorkUpdated(
+  ctx: PluginContext,
+  cfg: PluginConfig,
+  companyId: string,
+  data: AcnHarnessEventPayload["data"],
+): Promise<void> {
+  const orgId = configuredOrgId(cfg);
+  const eventOrgId = (data.org_id ?? "").trim();
+  if (!orgId || !eventOrgId || eventOrgId !== orgId) return;
+
+  const workId = (data.work_id ?? "").trim();
+  if (!workId) return;
+
+  const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+  const issueId = workMap[workId];
+  if (!issueId) return;
+
+  const status = data.status;
+  if (!status) return;
+
+  // Same constraint as task.accepted: Paperclip in_progress needs an assignee
+  // in Paperclip's identity space — ACN agent ids are not assignable.
+  if (status === "in_progress") {
+    const who = data.assignee_agent_id ?? "unknown";
+    await ctx.issues.createComment(
+      issueId,
+      `Org work moved to \`in_progress\` on ACN (assignee \`${who}\`).`,
+      companyId,
+    );
+    ctx.logger.info("acn-plugin: org.work_updated → comment (in_progress)", {
+      work_id: workId,
+      issue_id: issueId,
+    });
+    return;
+  }
+
+  if (status === "todo" || status === "done" || status === "cancelled") {
+    await ctx.issues.update(issueId, { status }, companyId);
+    await ctx.issues.createComment(
+      issueId,
+      `Org work status on ACN is now \`${status}\`.`,
+      companyId,
+    );
+    ctx.logger.info("acn-plugin: org.work_updated → issue status", {
+      work_id: workId,
+      issue_id: issueId,
+      status,
+    });
+  }
+}
+
+export async function handleOrgLoopTick(
+  ctx: PluginContext,
+  cfg: PluginConfig,
+  companyId: string,
+  data: AcnHarnessEventPayload["data"],
+): Promise<void> {
+  const orgId = configuredOrgId(cfg);
+  const eventOrgId = (data.org_id ?? "").trim();
+  if (!orgId || !eventOrgId || eventOrgId !== orgId) return;
+
+  const workIds = Array.isArray(data.work_ids) ? data.work_ids : [];
+  ctx.logger.info("acn-plugin: org.loop_tick", {
+    org_id: orgId,
+    open_count: data.open_count ?? workIds.length,
+    work_ids: workIds,
+  });
+
+  if (workIds.length === 0) return;
+
+  const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+  const openCount = data.open_count ?? workIds.length;
+  for (const workId of workIds) {
+    const issueId = workMap[workId];
+    if (!issueId) continue;
+    await ctx.issues.createComment(
+      issueId,
+      `Org loop tick — ${openCount} open work item(s) on ACN.`,
+      companyId,
+    );
+  }
+}
+
 // ── ACN webhook event handler ─────────────────────────────────────────────────
 
 async function handleAcnWebhook(
@@ -330,9 +513,9 @@ async function handleAcnWebhook(
   client: ACNClient,
   rawBody: string,
 ): Promise<void> {
-  let payload: AcnTaskEventPayload;
+  let payload: AcnHarnessEventPayload;
   try {
-    payload = JSON.parse(rawBody) as AcnTaskEventPayload;
+    payload = JSON.parse(rawBody) as AcnHarnessEventPayload;
   } catch {
     ctx.logger.warn("acn-plugin: received unparseable webhook body");
     return;
@@ -345,15 +528,38 @@ async function handleAcnWebhook(
   const companyId = companies[0]?.id;
   if (!companyId) return;
 
+  const { data } = payload;
+
+  // Preferred Org Harness path (P2c-C2) — must run before task.* so we never
+  // treat the overloaded task_id (org_id) as a Task Pool id.
+  if (payload.event === "org.work_created") {
+    await handleOrgWorkCreated(ctx, cfg, companyId, data);
+    return;
+  }
+  if (payload.event === "org.work_updated") {
+    await handleOrgWorkUpdated(ctx, cfg, companyId, data);
+    return;
+  }
+  if (payload.event === "org.loop_tick") {
+    await handleOrgLoopTick(ctx, cfg, companyId, data);
+    return;
+  }
+  if (payload.event.startsWith("org.")) {
+    ctx.logger.debug("acn-plugin: unhandled org event", { event: payload.event });
+    return;
+  }
+
+  const task_id = payload.task_id ?? "";
+  if (!task_id) return;
+
   const taskIssueMap = await loadMap(ctx, STATE_KEYS.issueTaskMap, companyId);
-  const { task_id, data } = payload;
 
   switch (payload.event) {
     case "task.created": {
       if (!cfg.autoCreateIssues) break;
       if (taskIssueMap[task_id]) break;
       // Echo guard: skip tasks the bridge agent itself created. The plugin's
-      // `handleIssueCreated` path also calls ACN createTask synchronously,
+      // legacy outbound path also called ACN createTask synchronously,
       // which fires this very `task.created` webhook *before* `saveMap` has
       // had a chance to persist the mapping. The map check above will miss
       // and we'd ghost-mirror our own outbound task back into a second
@@ -553,6 +759,8 @@ export async function handleIssueCreated(
     const work = await orgApi.createWork(orgId, {
       title: payload.title ?? issueId,
     });
+    // Close race: org.work_created may arrive before saveMap persists.
+    noteRecentOutboundWork(work.work_id);
     const fresh = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
     fresh[work.work_id] = issueId;
     await saveMap(ctx, STATE_KEYS.issueWorkMap, companyId, fresh);

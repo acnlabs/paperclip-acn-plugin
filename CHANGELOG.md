@@ -11,6 +11,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - **P2c C0/C1 — Issue create → Org work.** Human-created Paperclip issues now
   call `POST /api/v1/orgs/{org_id}/work` instead of Task Pool `createTask`.
+- **P2c C2 — Inbound `org.work_*` / `org.loop_tick`.** Harness webhooks for
+  Org work create/update mirror into Issues via `issue-work-map`; loop ticks
+  leave a short comment on mapped open work. Echo guard skips work the plugin
+  just created outbound. Note: for org.* events ACN's `task_id` field carries
+  `org_id` — the plugin keys off `event` + `data.work_id`.
 - New config `acnOrgId`. When empty, setup creates an Org bound to
   `acnSubnetId` and stores the id in company-scoped plugin state.
 - New state map `issue-work-map` (`work_id` → issue id). Legacy
@@ -24,8 +29,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Deprecated
 
 - Outbound Issue → Task Pool create (removed).
-- Inbound `task.*` mirror and Issue → Task `review` remain until C2/C3
-  (`org.work_*` + Org work status updates).
+- Inbound `task.*` mirror remains for transition; Issue → Task `/review` and
+  Issue → Org work status PATCH remain until **C3**.
 
 ## [0.1.1] - 2026-05-16
 

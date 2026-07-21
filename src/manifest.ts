@@ -107,7 +107,7 @@ const manifest: PaperclipPluginManifestV1 = {
       endpointKey: WEBHOOK_KEYS.acnEvents,
       displayName: "ACN Harness Events",
       description:
-        "Receives HMAC-signed lifecycle events from ACN (task.* legacy; org.work_* / org.loop_tick preferred going forward).",
+        "Receives HMAC-signed lifecycle events from ACN (org.work_* / org.loop_tick preferred; task.* legacy).",
     },
   ],
 
