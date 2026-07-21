@@ -13,9 +13,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   call `POST /api/v1/orgs/{org_id}/work` instead of Task Pool `createTask`.
 - **P2c C2 — Inbound `org.work_*` / `org.loop_tick`.** Harness webhooks for
   Org work create/update mirror into Issues via `issue-work-map`; loop ticks
-  leave a short comment on mapped open work. Echo guard skips work the plugin
-  just created outbound. Note: for org.* events ACN's `task_id` field carries
-  `org_id` — the plugin keys off `event` + `data.work_id`.
+  leave one throttled comment on the first mapped open work. In-flight binding
+  covers ACN's synchronous harness POST during `createWork` (no twin Issue);
+  late retries use a post-persist echo set. ACN issue tab renders Org work
+  ids without crashing on null Task fields. Note: for org.* events ACN's
+  `task_id` field carries `org_id` — the plugin keys off `event` + `data.work_id`.
 - New config `acnOrgId`. When empty, setup creates an Org bound to
   `acnSubnetId` and stores the id in company-scoped plugin state.
 - New state map `issue-work-map` (`work_id` → issue id). Legacy

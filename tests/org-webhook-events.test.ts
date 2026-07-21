@@ -7,7 +7,9 @@ import { afterEach, describe, it } from "node:test";
 import type { PluginContext } from "@paperclipai/plugin-sdk";
 import { STATE_KEYS } from "../src/constants.ts";
 import {
+  beginOutboundWorkCreate,
   clearRecentOutboundWorkForTests,
+  endOutboundWorkCreate,
   handleOrgLoopTick,
   handleOrgWorkCreated,
   handleOrgWorkUpdated,
@@ -127,6 +129,23 @@ describe("handleOrgWorkCreated", () => {
     assert.equal(issues.create.calls.length, 0);
   });
 
+  it("binds to in-flight outbound issue (sync webhook during createWork)", async () => {
+    const { ctx, store, issues, companyId } = makeCtx();
+    beginOutboundWorkCreate(companyId, "iss-human", "Human title");
+    try {
+      await handleOrgWorkCreated(ctx, baseCfg, companyId, {
+        org_id: "org_test",
+        work_id: "work_sync",
+        title: "Human title",
+      });
+    } finally {
+      endOutboundWorkCreate(companyId, "iss-human");
+    }
+    assert.equal(issues.create.calls.length, 0);
+    const map = JSON.parse(store[STATE_KEYS.issueWorkMap]!) as Record<string, string>;
+    assert.equal(map.work_sync, "iss-human");
+  });
+
   it("no-ops when org_id mismatches", async () => {
     const { ctx, issues, companyId } = makeCtx();
     await handleOrgWorkCreated(ctx, baseCfg, companyId, {
@@ -170,17 +189,34 @@ describe("handleOrgWorkUpdated", () => {
 });
 
 describe("handleOrgLoopTick", () => {
-  it("comments on mapped open work and never creates issues", async () => {
+  it("comments once on first mapped open work", async () => {
     const { ctx, issues, companyId } = makeCtx({
       workMap: { work_a: "iss-a", work_b: "iss-b" },
     });
     await handleOrgLoopTick(ctx, baseCfg, companyId, {
       org_id: "org_test",
       open_count: 2,
-      work_ids: ["work_a", "work_unknown"],
+      work_ids: ["work_a", "work_b"],
     });
     assert.equal(issues.create.calls.length, 0);
     assert.equal(issues.createComment.calls.length, 1);
     assert.equal(issues.createComment.calls[0]![0], "iss-a");
+  });
+
+  it("throttles repeated ticks within cooldown", async () => {
+    const { ctx, issues, companyId } = makeCtx({
+      workMap: { work_a: "iss-a" },
+    });
+    await handleOrgLoopTick(ctx, baseCfg, companyId, {
+      org_id: "org_test",
+      open_count: 1,
+      work_ids: ["work_a"],
+    });
+    await handleOrgLoopTick(ctx, baseCfg, companyId, {
+      org_id: "org_test",
+      open_count: 1,
+      work_ids: ["work_a"],
+    });
+    assert.equal(issues.createComment.calls.length, 1);
   });
 });

@@ -91,13 +91,21 @@ let _harnessSecret: string | null = null;
  */
 let _selfAgentId: string | null = null;
 /**
- * work_ids we just created via C1 outbound. Closes the race where
- * `org.work_created` arrives before `issue-work-map` is persisted.
+ * work_ids successfully mapped after C1 outbound. Covers async/retry
+ * deliveries that arrive after `saveMap` (ACN may retry after sync POST fails).
  */
 const _recentOutboundWorkIds = new Set<string>();
 const RECENT_OUTBOUND_CAP = 200;
 
-/** Mark a work_id as outbound so inbound org.work_created skips echo. */
+/**
+ * In-flight Paperclip→ACN creates. ACN `create_work` awaits harness POST
+ * before returning, so `org.work_created` is handled *during* `createWork`
+ * — before we know `work_id`. Bind to this issue instead of creating a twin.
+ */
+type PendingOutbound = { issueId: string; title: string };
+const _pendingOutboundByCompany = new Map<string, PendingOutbound[]>();
+
+/** Mark a work_id as outbound so late/retry org.work_created skips create. */
 export function noteRecentOutboundWork(workId: string): void {
   _recentOutboundWorkIds.add(workId);
   if (_recentOutboundWorkIds.size > RECENT_OUTBOUND_CAP) {
@@ -106,10 +114,48 @@ export function noteRecentOutboundWork(workId: string): void {
   }
 }
 
-/** Test helper — clear the outbound echo set. */
+/** Drop a work_id from the echo set (e.g. after saveMap failure). */
+export function forgetRecentOutboundWork(workId: string): void {
+  _recentOutboundWorkIds.delete(workId);
+}
+
+/** Register an in-flight outbound create before awaiting createWork. */
+export function beginOutboundWorkCreate(
+  companyId: string,
+  issueId: string,
+  title: string,
+): void {
+  const stack = _pendingOutboundByCompany.get(companyId) ?? [];
+  stack.push({ issueId, title });
+  _pendingOutboundByCompany.set(companyId, stack);
+}
+
+/** Clear in-flight entry after createWork settles (success or failure). */
+export function endOutboundWorkCreate(companyId: string, issueId: string): void {
+  const stack = _pendingOutboundByCompany.get(companyId);
+  if (!stack?.length) return;
+  const idx = stack.findIndex((p) => p.issueId === issueId);
+  if (idx >= 0) stack.splice(idx, 1);
+  if (stack.length === 0) _pendingOutboundByCompany.delete(companyId);
+  else _pendingOutboundByCompany.set(companyId, stack);
+}
+
+function peekPendingOutbound(companyId: string): PendingOutbound | undefined {
+  const stack = _pendingOutboundByCompany.get(companyId);
+  if (!stack?.length) return undefined;
+  return stack[stack.length - 1];
+}
+
+/** Test helper — clear outbound echo + in-flight stacks. */
 export function clearRecentOutboundWorkForTests(): void {
   _recentOutboundWorkIds.clear();
+  _pendingOutboundByCompany.clear();
+  _lastLoopTickCommentAt = 0;
 }
+
+/** Cooldown so loop_tick does not spam issue comments. */
+const LOOP_TICK_COMMENT_COOLDOWN_MS = 5 * 60 * 1000;
+let _lastLoopTickCommentAt = 0;
 
 // ── State helpers ─────────────────────────────────────────────────────────────
 
@@ -402,6 +448,30 @@ export async function handleOrgWorkCreated(
     return;
   }
 
+  // Sync harness: bind to the Paperclip issue currently inside createWork.
+  const pending = peekPendingOutbound(companyId);
+  if (pending) {
+    try {
+      const fresh = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+      fresh[workId] = pending.issueId;
+      await saveMap(ctx, STATE_KEYS.issueWorkMap, companyId, fresh);
+      noteRecentOutboundWork(workId);
+      ctx.logger.info("acn-plugin: org.work_created → bound to in-flight issue", {
+        work_id: workId,
+        issue_id: pending.issueId,
+        org_id: orgId,
+      });
+    } catch (err) {
+      forgetRecentOutboundWork(workId);
+      ctx.logger.error("acn-plugin: failed to bind org.work_created to in-flight issue", {
+        work_id: workId,
+        issue_id: pending.issueId,
+        error: String(err),
+      });
+    }
+    return;
+  }
+
   if (!cfg.autoCreateIssues) return;
 
   const issue = await ctx.issues.create({
@@ -412,14 +482,24 @@ export async function handleOrgWorkCreated(
     originKind: `plugin:${PLUGIN_ID}:work` as `plugin:${string}`,
     originId: workId,
   });
-  const fresh = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
-  fresh[workId] = issue.id;
-  await saveMap(ctx, STATE_KEYS.issueWorkMap, companyId, fresh);
-  ctx.logger.info("acn-plugin: org.work_created → issue created", {
-    work_id: workId,
-    issue_id: issue.id,
-    org_id: orgId,
-  });
+  try {
+    const fresh = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+    fresh[workId] = issue.id;
+    await saveMap(ctx, STATE_KEYS.issueWorkMap, companyId, fresh);
+    noteRecentOutboundWork(workId);
+    ctx.logger.info("acn-plugin: org.work_created → issue created", {
+      work_id: workId,
+      issue_id: issue.id,
+      org_id: orgId,
+    });
+  } catch (err) {
+    forgetRecentOutboundWork(workId);
+    ctx.logger.error("acn-plugin: org.work_created issue created but map persist failed", {
+      work_id: workId,
+      issue_id: issue.id,
+      error: String(err),
+    });
+  }
 }
 
 export async function handleOrgWorkUpdated(
@@ -484,16 +564,22 @@ export async function handleOrgLoopTick(
   if (!orgId || !eventOrgId || eventOrgId !== orgId) return;
 
   const workIds = Array.isArray(data.work_ids) ? data.work_ids : [];
+  const openCount = data.open_count ?? workIds.length;
   ctx.logger.info("acn-plugin: org.loop_tick", {
     org_id: orgId,
-    open_count: data.open_count ?? workIds.length,
+    open_count: openCount,
     work_ids: workIds,
   });
 
   if (workIds.length === 0) return;
 
+  const now = Date.now();
+  if (now - _lastLoopTickCommentAt < LOOP_TICK_COMMENT_COOLDOWN_MS) {
+    return;
+  }
+
   const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
-  const openCount = data.open_count ?? workIds.length;
+  // One comment per tick (first mapped open work) to avoid comment spam.
   for (const workId of workIds) {
     const issueId = workMap[workId];
     if (!issueId) continue;
@@ -502,6 +588,8 @@ export async function handleOrgLoopTick(
       `Org loop tick — ${openCount} open work item(s) on ACN.`,
       companyId,
     );
+    _lastLoopTickCommentAt = now;
+    break;
   }
 }
 
@@ -754,16 +842,21 @@ export async function handleIssueCreated(
   if (reverseLookup(workMap, issueId) || reverseLookup(taskMap, issueId)) return;
 
   const payload = (event.payload ?? {}) as { title?: string };
+  const title = payload.title ?? issueId;
 
+  // Must register before await: ACN delivers org.work_created inline.
+  beginOutboundWorkCreate(companyId, issueId, title);
   try {
     const work = await orgApi.createWork(orgId, {
-      title: payload.title ?? issueId,
+      title,
     });
-    // Close race: org.work_created may arrive before saveMap persists.
-    noteRecentOutboundWork(work.work_id);
     const fresh = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
-    fresh[work.work_id] = issueId;
-    await saveMap(ctx, STATE_KEYS.issueWorkMap, companyId, fresh);
+    // Webhook may have already bound work_id → this issue during createWork.
+    if (!fresh[work.work_id]) {
+      fresh[work.work_id] = issueId;
+      await saveMap(ctx, STATE_KEYS.issueWorkMap, companyId, fresh);
+    }
+    noteRecentOutboundWork(work.work_id);
     ctx.logger.info("acn-plugin: issue.created → Org work created", {
       issue_id: issueId,
       org_id: orgId,
@@ -775,6 +868,8 @@ export async function handleIssueCreated(
       org_id: orgId,
       error: String(err),
     });
+  } finally {
+    endOutboundWorkCreate(companyId, issueId);
   }
 }
 

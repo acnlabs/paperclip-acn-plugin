@@ -8,12 +8,16 @@ import {
 // ── Types shared with worker bridge ──────────────────────────────────────────
 
 export interface AcnTaskInfo {
-  task_id: string;
-  title: string;
-  status: string;
+  /** Org Harness work path vs legacy Task Pool mirror. */
+  source?: "org_work" | "task_pool";
+  work_id?: string | null;
+  org_id?: string | null;
+  task_id: string | null;
+  title: string | null;
+  status: string | null;
   /** Decimal string from ACN backend (e.g. "10.00"). */
-  reward: string;
-  reward_currency: string;
+  reward: string | null;
+  reward_currency: string | null;
   participations: Array<{
     participation_id: string;
     agent_id: string;
@@ -157,9 +161,10 @@ const STATUS_COLORS: Record<string, string> = {
   accepted: "#d97706",
 };
 
-function StatusBadge({ status }: { status: string }) {
-  const color = STATUS_COLORS[status] ?? "#6b7280";
-  return <span style={styles.badge(color)}>{status.replace(/_/g, " ")}</span>;
+function StatusBadge({ status }: { status: string | null | undefined }) {
+  const label = status && status.trim() ? status : "unknown";
+  const color = STATUS_COLORS[label] ?? "#6b7280";
+  return <span style={styles.badge(color)}>{label.replace(/_/g, " ")}</span>;
 }
 
 // ── Participation item ────────────────────────────────────────────────────────
@@ -298,6 +303,40 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
   }
 
   if (!data) {
+    return (
+      <div style={styles.container}>
+        <span style={styles.muted}>This issue is not linked to ACN work or a task.</span>
+      </div>
+    );
+  }
+
+  // Org Harness path — no Task Pool review UI (status PATCH is C3).
+  if (data.source === "org_work" || data.work_id) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.row}>
+          <span style={styles.label}>ACN Work</span>
+          <span style={styles.mono}>{data.work_id ?? "—"}</span>
+        </div>
+        <div style={styles.row}>
+          <span style={styles.label}>ACN Org</span>
+          <span style={styles.mono}>{data.org_id ?? "—"}</span>
+        </div>
+        {data.status ? (
+          <div style={styles.row}>
+            <span style={styles.label}>Status</span>
+            <StatusBadge status={data.status} />
+          </div>
+        ) : (
+          <div style={{ ...styles.muted, marginTop: "8px" }}>
+            Linked via Org Harness Work Port. Issue status sync from Paperclip → ACN is C3.
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (!data.task_id) {
     return (
       <div style={styles.container}>
         <span style={styles.muted}>This issue is not linked to an ACN task.</span>
