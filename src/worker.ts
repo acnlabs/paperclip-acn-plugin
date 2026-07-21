@@ -2,29 +2,32 @@
  * ACN Plugin Worker
  *
  * Responsibilities:
- *  P0-1  Startup  : register webhook URL as ACN subnet harness
- *  P0-2  Startup  : full sync — pull open ACN tasks → Paperclip issues
- *  P0-3  ACN→PC   : task.* webhook events → sync Paperclip issue status / comments
- *  P0-4  PC→ACN   : Paperclip issue done/cancelled → ACN review (approve / reject)
- *  P0-5  PC→ACN   : Paperclip issue created (not from ACN) → ACN task
+ *  P0-1  Startup  : resolve/create ACN Org; register subnet harness webhook
+ *  P0-2  Startup  : full sync — pull open ACN tasks → Paperclip issues (legacy)
+ *  P0-3  ACN→PC   : task.* webhook events → sync Paperclip issue status / comments (legacy)
+ *  P0-4  PC→ACN   : Paperclip issue done/cancelled → ACN task review (legacy)
+ *  P2c-C1 PC→ACN  : Paperclip issue created → Org work (NOT Task Pool)
  */
 
 import type { PluginContext, PluginEvent } from "@paperclipai/plugin-sdk";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import { ACNClient, type Task } from "acn-client";
 import { PLUGIN_ID, STATE_KEYS, WEBHOOK_KEYS } from "./constants.js";
+import { AcnHttpError, AcnOrgApi, orgSubnetId } from "./lib/org-api.js";
 import { verifyAcnSignature } from "./lib/signature.js";
 import { shouldSkipPluginEcho } from "./lib/echo-guard.js";
 import { resolveSecretOrLiteral } from "./lib/secrets.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-interface PluginConfig {
+export interface PluginConfig {
   acnBaseUrl?: string;
   paperclipBaseUrl?: string;
   acnApiKeyRef?: string;
   /** Secret ref for the HMAC-SHA256 secret shared with ACN's harness webhook. */
   acnHarnessSecretRef?: string;
+  /** Org Harness org_id; auto-created + persisted when empty. */
+  acnOrgId?: string;
   acnSubnetId?: string;
   autoCreateIssues?: boolean;
   autoApproveOnDone?: boolean;
@@ -75,8 +78,7 @@ let _harnessSecret: string | null = null;
 /**
  * ACN agent_id of the API key the plugin is configured with. Used to detect
  * — and skip — webhook events fired for tasks the plugin itself just
- * created (PC issue → plugin createTask → ACN fires task.created → plugin
- * would otherwise mirror it back into a ghost duplicate issue).
+ * created (legacy Task path). Org work create does not emit task.created.
  */
 let _selfAgentId: string | null = null;
 
@@ -106,9 +108,141 @@ async function saveMap(ctx: PluginContext, key: string, companyId: string, map: 
   );
 }
 
+async function loadScalar(
+  ctx: PluginContext,
+  key: string,
+  companyId: string,
+): Promise<string | null> {
+  const raw = await ctx.state.get({ scopeKind: "company", scopeId: companyId, stateKey: key });
+  if (raw == null || raw === "") return null;
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s || s === "null") return null;
+    // Historically some hosts JSON-encode scalars.
+    if (s.startsWith('"') && s.endsWith('"')) {
+      try {
+        const parsed = JSON.parse(s) as unknown;
+        return typeof parsed === "string" && parsed ? parsed : null;
+      } catch {
+        return s;
+      }
+    }
+    return s;
+  }
+  return null;
+}
+
+async function saveScalar(
+  ctx: PluginContext,
+  key: string,
+  companyId: string,
+  value: string,
+): Promise<void> {
+  await ctx.state.set(
+    { scopeKind: "company", scopeId: companyId, stateKey: key },
+    value,
+  );
+}
+
 /** Reverse-lookup: find the key whose value equals `val` */
 function reverseLookup(map: StateMap, val: string): string | undefined {
   return Object.entries(map).find(([, v]) => v === val)?.[0];
+}
+
+/**
+ * Resolve configured / persisted Org, or create one bound to ``acnSubnetId``.
+ * Mutates ``cfg.acnOrgId`` / ``cfg.acnSubnetId`` when filled from Org record.
+ *
+ * On ``subnet_already_bound`` (409): if the error body hints a ``org_…`` id,
+ * reuse it; otherwise fail with an operator-facing message to set ``acnOrgId``.
+ */
+export async function resolveAcnOrg(
+  ctx: PluginContext,
+  cfg: PluginConfig,
+  orgApi: AcnOrgApi,
+  companyId: string | undefined,
+  companyName: string | undefined,
+): Promise<string> {
+  let orgId = (cfg.acnOrgId ?? "").trim();
+  if (!orgId && companyId) {
+    orgId = (await loadScalar(ctx, STATE_KEYS.acnOrgId, companyId)) ?? "";
+  }
+
+  if (orgId) {
+    const org = await orgApi.getOrg(orgId);
+    const fence = orgSubnetId(org);
+    const configuredSubnet = (cfg.acnSubnetId ?? "").trim();
+    if (fence && configuredSubnet && fence !== configuredSubnet) {
+      ctx.logger.warn(
+        "acn-plugin: acnSubnetId does not match Org fence — using Org fence for harness",
+        {
+          acnOrgId: org.org_id,
+          configured_subnet: configuredSubnet,
+          org_fence: fence,
+        },
+      );
+      cfg.acnSubnetId = fence;
+    } else if (fence && !configuredSubnet) {
+      cfg.acnSubnetId = fence;
+    }
+    cfg.acnOrgId = org.org_id;
+    if (companyId) {
+      await saveScalar(ctx, STATE_KEYS.acnOrgId, companyId, org.org_id);
+    }
+    return org.org_id;
+  }
+
+  const subnet = (cfg.acnSubnetId ?? "").trim();
+  if (!subnet) {
+    throw new Error(
+      "acnOrgId or acnSubnetId required: set an existing Org, or a subnet to create one",
+    );
+  }
+
+  const displayName =
+    (companyName && companyName.trim()) ||
+    (companyId ? `Paperclip ${companyId}` : "Paperclip Org");
+
+  try {
+    const created = await orgApi.createOrg({
+      display_name: displayName,
+      subnet_id: subnet,
+    });
+    cfg.acnOrgId = created.org_id;
+    if (companyId) {
+      await saveScalar(ctx, STATE_KEYS.acnOrgId, companyId, created.org_id);
+    }
+    ctx.logger.info("acn-plugin: created ACN Org for company", {
+      org_id: created.org_id,
+      subnet_id: subnet,
+      company_id: companyId,
+    });
+    return created.org_id;
+  } catch (err) {
+    if (err instanceof AcnHttpError && err.status === 409) {
+      const hint = err.boundOrgIdHint;
+      if (hint) {
+        ctx.logger.warn(
+          "acn-plugin: subnet already bound — reusing bound Org from error hint",
+          { subnet_id: subnet, org_id: hint, reason: err.reason },
+        );
+        const org = await orgApi.getOrg(hint);
+        cfg.acnOrgId = org.org_id;
+        const fence = orgSubnetId(org);
+        if (fence) cfg.acnSubnetId = fence;
+        if (companyId) {
+          await saveScalar(ctx, STATE_KEYS.acnOrgId, companyId, org.org_id);
+        }
+        return org.org_id;
+      }
+      throw new Error(
+        `Subnet '${subnet}' is already bound to an ACN Org (reason=${err.reason ?? "conflict"}). ` +
+          `Set instance config acnOrgId to that org_id and restart the plugin. ` +
+          `Original: ${err.message}`,
+      );
+    }
+    throw err;
+  }
 }
 
 // ── ACN client factory ────────────────────────────────────────────────────────
@@ -383,7 +517,7 @@ export async function handleIssueUpdated(
 export async function handleIssueCreated(
   ctx: PluginContext,
   cfg: PluginConfig,
-  client: ACNClient,
+  orgApi: AcnOrgApi,
   event: PluginEvent,
 ): Promise<void> {
   if (shouldSkipPluginEcho(event, PLUGIN_ID)) return;
@@ -397,47 +531,40 @@ export async function handleIssueCreated(
   const issueId = event.entityId;
   const companyId = event.companyId;
 
-  const taskIssueMap = await loadMap(ctx, STATE_KEYS.issueTaskMap, companyId);
-  if (reverseLookup(taskIssueMap, issueId)) return;
-
-  const payload = (event.payload ?? {}) as { title?: string };
-  let description = "";
-  try {
-    const full = (await ctx.issues.get(issueId, companyId)) as {
-      description?: string;
-    } | null;
-    description = full?.description?.trim() ?? "";
-  } catch (err) {
-    ctx.logger.warn("acn-plugin: failed to fetch issue body, falling back to title", {
+  const orgId = (cfg.acnOrgId ?? "").trim();
+  if (!orgId) {
+    ctx.logger.error("acn-plugin: issue.created skipped — acnOrgId not resolved", {
       issue_id: issueId,
-      error: String(err),
     });
+    return;
   }
 
+  // Dedup against both Org work map and legacy Task map (inbound task.* may
+  // still create issues during the transition).
+  const [workMap, taskMap] = await Promise.all([
+    loadMap(ctx, STATE_KEYS.issueWorkMap, companyId),
+    loadMap(ctx, STATE_KEYS.issueTaskMap, companyId),
+  ]);
+  if (reverseLookup(workMap, issueId) || reverseLookup(taskMap, issueId)) return;
+
+  const payload = (event.payload ?? {}) as { title?: string };
+
   try {
-    const task = await client.createTask({
+    const work = await orgApi.createWork(orgId, {
       title: payload.title ?? issueId,
-      description: description || "Task created from Paperclip issue.",
-      reward: "0",
-      deadline_hours: 168,
-      subnet_id: cfg.acnSubnetId ?? null,
-      reward_currency: "credits",
     });
-    // Persist the mapping IMMEDIATELY: ACN's `task.created` webhook (which
-    // mirrors ACN-side tasks back into Paperclip) fires synchronously from
-    // `createTask`, so the webhook handler will race this code path. If we
-    // don't have the map in place before the webhook arrives, the handler
-    // sees an unknown task_id and creates a ghost duplicate issue.
-    const fresh = await loadMap(ctx, STATE_KEYS.issueTaskMap, companyId);
-    fresh[task.task_id] = issueId;
-    await saveMap(ctx, STATE_KEYS.issueTaskMap, companyId, fresh);
-    ctx.logger.info("acn-plugin: issue.created → ACN task created", {
+    const fresh = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+    fresh[work.work_id] = issueId;
+    await saveMap(ctx, STATE_KEYS.issueWorkMap, companyId, fresh);
+    ctx.logger.info("acn-plugin: issue.created → Org work created", {
       issue_id: issueId,
-      task_id: task.task_id,
+      org_id: orgId,
+      work_id: work.work_id,
     });
   } catch (err) {
-    ctx.logger.error("acn-plugin: failed to create ACN task for issue", {
+    ctx.logger.error("acn-plugin: failed to create Org work for issue", {
       issue_id: issueId,
+      org_id: orgId,
       error: String(err),
     });
   }
@@ -449,15 +576,20 @@ const plugin = definePlugin({
   async setup(ctx) {
     const cfg = (await ctx.config.get()) as PluginConfig;
 
-    if (!cfg.acnApiKeyRef || !cfg.acnSubnetId) {
+    if (!cfg.acnApiKeyRef) {
+      ctx.logger.warn("acn-plugin: acnApiKeyRef not configured — skipping setup");
+      return;
+    }
+    if (!(cfg.acnOrgId ?? "").trim() && !(cfg.acnSubnetId ?? "").trim()) {
       ctx.logger.warn(
-        "acn-plugin: acnApiKeyRef or acnSubnetId not configured — skipping setup",
+        "acn-plugin: acnOrgId or acnSubnetId required — skipping setup",
       );
       return;
     }
 
     const apiKey = await resolveSecretOrLiteral(cfg.acnApiKeyRef, ctx.secrets);
     const client = buildClient(cfg, apiKey);
+    const orgApi = new AcnOrgApi(cfg.acnBaseUrl ?? "https://api.acnlabs.dev", apiKey);
 
     // Resolve the HMAC secret used for X-ACN-Signature verification.
     let harnessSecret: string | null = null;
@@ -476,18 +608,32 @@ const plugin = definePlugin({
       );
     }
 
+    const companies = await ctx.companies.list();
+    if (companies.length > 1) {
+      ctx.logger.warn(
+        "acn-plugin: multiple Paperclip companies found — only the first is bound to one ACN Org (multi-company mapping is not supported yet)",
+        { company_count: companies.length, using: companies[0]?.id },
+      );
+    }
+    const companyId = companies[0]?.id as string | undefined;
+    const companyName = (companies[0] as { name?: string } | undefined)?.name;
+
+    try {
+      await resolveAcnOrg(ctx, cfg, orgApi, companyId, companyName);
+    } catch (err) {
+      ctx.logger.error("acn-plugin: failed to resolve/create ACN Org — skipping setup", {
+        error: String(err),
+      });
+      return;
+    }
+
     // Stash for onWebhook()
     _ctx = ctx;
     _cfg = cfg;
     _client = client;
     _harnessSecret = harnessSecret;
 
-    // Resolve the configured bridge agent's identity. This lets the ACN
-    // webhook handler distinguish events fired for tasks we created
-    // ourselves from events fired for tasks created by other ACN agents,
-    // so we don't mirror plugin-issued tasks back into ghost duplicate
-    // Paperclip issues. Failure is non-fatal: we simply lose the ghost-
-    // mirror guard and fall back to the slower map-based dedup.
+    // Legacy task.* echo guard (inbound Task mirror still active).
     try {
       const me = await client.getMyAgent();
       _selfAgentId = me.agent_id;
@@ -502,25 +648,27 @@ const plugin = definePlugin({
 
     // ── P0-1  Register harness webhook ────────────────────────────────────────
     const webhookUrl = harnessWebhookUrl(cfg);
-    if (webhookUrl) {
+    const subnetId = (cfg.acnSubnetId ?? "").trim();
+    if (webhookUrl && subnetId) {
       try {
-        await client.registerSubnetHarness(cfg.acnSubnetId, webhookUrl, harnessSecret);
+        await client.registerSubnetHarness(subnetId, webhookUrl, harnessSecret);
         ctx.logger.info("acn-plugin: registered harness", {
-          subnet_id: cfg.acnSubnetId,
+          subnet_id: subnetId,
+          org_id: cfg.acnOrgId,
           webhook_url: webhookUrl,
           signed: harnessSecret !== null,
         });
       } catch (err) {
         ctx.logger.error("acn-plugin: harness registration failed", { error: String(err) });
       }
-    } else {
+    } else if (!webhookUrl) {
       ctx.logger.warn("acn-plugin: paperclipBaseUrl not set — skipping harness registration");
+    } else {
+      ctx.logger.warn("acn-plugin: no subnet_id after Org resolve — skipping harness registration");
     }
 
-    // ── P0-2  Full initial task sync ──────────────────────────────────────────
-    const companies = await ctx.companies.list();
-    const companyId = companies[0]?.id;
-    if (companyId) {
+    // ── P0-2  Full initial task sync (legacy inbound) ─────────────────────────
+    if (companyId && subnetId) {
       let taskIssueMap = await loadMap(ctx, STATE_KEYS.issueTaskMap, companyId);
       try {
         taskIssueMap = await syncTasks(ctx, client, cfg, companyId, taskIssueMap);
@@ -530,14 +678,14 @@ const plugin = definePlugin({
       }
     }
 
-    // ── P0-4  Paperclip issue status → ACN review ────────────────────────────
+    // ── P0-4  Paperclip issue status → ACN review (legacy Task) ───────────────
     ctx.events.on("issue.updated", async (event) => {
       await handleIssueUpdated(ctx, cfg, client, event);
     });
 
-    // ── P0-5  Paperclip issue created → ACN task ──────────────────────────────
+    // ── P2c-C1  Paperclip issue created → Org work ────────────────────────────
     ctx.events.on("issue.created", async (event) => {
-      await handleIssueCreated(ctx, cfg, client, event);
+      await handleIssueCreated(ctx, cfg, orgApi, event);
     });
 
     // ── Bridge: getData for ACN tab ────────────────────────────────────────────
@@ -545,6 +693,22 @@ const plugin = definePlugin({
       const issueId = params.issueId as string | undefined;
       const cid = params.companyId as string | undefined;
       if (!issueId || !cid) return null;
+
+      const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, cid);
+      const workId = reverseLookup(workMap, issueId);
+      if (workId && cfg.acnOrgId) {
+        return {
+          work_id: workId,
+          org_id: cfg.acnOrgId,
+          source: "org_work",
+          task_id: null,
+          title: null,
+          status: null,
+          reward: null,
+          reward_currency: null,
+          participations: [],
+        };
+      }
 
       const map = await loadMap(ctx, STATE_KEYS.issueTaskMap, cid);
       const taskId = reverseLookup(map, issueId);
@@ -562,6 +726,9 @@ const plugin = definePlugin({
         reward: task.reward,
         reward_currency: task.reward_currency,
         participations,
+        source: "task_pool",
+        work_id: null,
+        org_id: cfg.acnOrgId ?? null,
       };
     });
 
@@ -574,7 +741,10 @@ const plugin = definePlugin({
       return { ok: true };
     });
 
-    ctx.logger.info("acn-plugin: setup complete", { subnet_id: cfg.acnSubnetId });
+    ctx.logger.info("acn-plugin: setup complete", {
+      org_id: cfg.acnOrgId,
+      subnet_id: cfg.acnSubnetId,
+    });
   },
 
   async onHealth() {

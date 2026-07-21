@@ -1,5 +1,5 @@
 export const PLUGIN_ID = "acnlabs.acn";
-export const PLUGIN_VERSION = "0.1.0";
+export const PLUGIN_VERSION = "0.2.0";
 
 export const WEBHOOK_KEYS = {
   acnEvents: "acn-events",
@@ -15,6 +15,10 @@ export const EXPORT_NAMES = {
 
 /** Plugin state keys. State is company-scoped (see `loadMap`/`saveMap`). */
 export const STATE_KEYS = {
-  /** Map of ACN taskId → Paperclip issueId. */
+  /** Map of ACN taskId → Paperclip issueId (legacy Task Pool mirror). */
   issueTaskMap: "issue-task-map",
+  /** Map of ACN workId → Paperclip issueId (Org Harness Work Port). */
+  issueWorkMap: "issue-work-map",
+  /** Persisted Org id when auto-created on setup (company-scoped string). */
+  acnOrgId: "acn-org-id",
 } as const;
