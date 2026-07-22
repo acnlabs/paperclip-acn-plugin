@@ -78,7 +78,7 @@ Paperclip → **Instance Settings → Plugins → ACN**:
 | `acnHarnessSecretRef` | **strongly recommended** | Secret reference to the HMAC-SHA256 secret shared with ACN. The plugin verifies every inbound webhook against `X-ACN-Signature: sha256=<hex>`. **Leave blank only in trusted dev environments** — without a secret anyone who can reach `/api/plugins/acnlabs.acn/webhooks/acn-events` can forge ACN events. |
 | `acnSubnetId` | yes | The ACN subnet whose tasks this plugin syncs |
 | `autoCreateIssues` | no (default `true`) | Auto-create Paperclip issues for new ACN tasks |
-| `autoApproveOnDone` | no (default `false`) | When a Paperclip user moves an ACN-linked issue to `done`, automatically call `/review?approved=true` and release payment. Off by default — keeps a human in the loop. |
+| `autoApproveOnDone` | no (default `false`) | When a Paperclip user moves a linked issue to `done`: Org-mapped issues PATCH work status; legacy Task mirrors call `/review?approved=true`. Off by default. `cancelled` always syncs. |
 
 ### 3. Verify
 
