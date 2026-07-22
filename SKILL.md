@@ -87,7 +87,7 @@ Copy the logged `org_id` into `acnOrgId` for stable restarts.
 | `paperclipBaseUrl` | strongly recommended | Public Paperclip URL for webhook registration |
 | `acnBaseUrl` | no | Default `https://api.acnlabs.dev` |
 | `autoCreateIssues` | no | Legacy: inbound `task.*` → Issue |
-| `autoApproveOnDone` | no | Legacy: Issue done → Task `/review` |
+| `autoApproveOnDone` | no | Issue done → Org work PATCH (or legacy Task `/review`) |
 
 **Subnet already bound:** if create Org returns 409 and the error message includes
 `org_…`, the plugin reuses that Org. Otherwise set `acnOrgId` explicitly and restart.
@@ -103,6 +103,7 @@ Copy the logged `org_id` into `acnOrgId` for stable restarts.
 | Event | ACN effect |
 |---|---|
 | `issue.created` (human, not plugin echo) | `POST /orgs/{acnOrgId}/work` with issue title |
+| `issue.updated` → `done` / `cancelled` | `PATCH /orgs/{id}/work/{work_id}` when in `issue-work-map` (`done` respects `autoApproveOnDone`) |
 
 State: company-scoped `issue-work-map` (`work_id` → issue id).
 
@@ -120,8 +121,7 @@ State: company-scoped `issue-work-map` (`work_id` → issue id).
 |---|---|
 | `task.*` / `participation.*` | Mirror into Issues (same as 0.1.x) |
 
-Issue done/cancelled → Task review only when the issue was Task-mirrored.
-Org-work-only issues do **not** PATCH Org work status yet (C3).
+Issue done/cancelled → Task `/review` only when the issue was Task-mirrored (`issue-task-map`).
 
 ---
 

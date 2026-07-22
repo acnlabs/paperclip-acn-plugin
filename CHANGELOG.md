@@ -28,11 +28,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Warn when multiple Paperclip companies exist (only the first is bound).
 - `SKILL.md` rewritten for the Org work path (no longer teaches `createTask`).
 
+- **P2c C3 — Issue status → Org work PATCH.** Moving an Org-mapped issue to
+  `done` / `cancelled` calls `PATCH /orgs/{id}/work/{work_id}`. `done` still
+  respects `autoApproveOnDone`; `cancelled` always syncs. Legacy Task `/review`
+  remains only for issues linked via `issue-task-map`.
+
 ### Deprecated
 
 - Outbound Issue → Task Pool create (removed).
-- Inbound `task.*` mirror remains for transition; Issue → Task `/review` and
-  Issue → Org work status PATCH remain until **C3**.
+- Inbound `task.*` mirror remains for transition; Issue → Task `/review` only
+  for legacy Task-mirrored issues.
 
 ## [0.1.1] - 2026-05-16
 
