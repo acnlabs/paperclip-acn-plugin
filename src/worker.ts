@@ -8,6 +8,7 @@
  *  P0-4  PC→ACN   : Paperclip issue done/cancelled → ACN task review (legacy)
  *  P2c-C1 PC→ACN  : Paperclip issue created → Org work (NOT Task Pool)
  *  P2c-C2 ACN→PC  : org.work_* / org.loop_tick → Issues (preferred inbound)
+ *  P2c-C3 PC→ACN  : Paperclip issue done/cancelled → PATCH Org work status
  */
 
 import type { PluginContext, PluginEvent } from "@paperclipai/plugin-sdk";
@@ -762,6 +763,7 @@ export async function handleIssueUpdated(
   ctx: PluginContext,
   cfg: PluginConfig,
   client: ACNClient,
+  orgApi: AcnOrgApi,
   event: PluginEvent,
 ): Promise<void> {
   if (shouldSkipPluginEcho(event, PLUGIN_ID)) return;
@@ -775,13 +777,46 @@ export async function handleIssueUpdated(
   const payload = (event.payload ?? {}) as { status?: string };
   const status = payload.status;
   if (!status) return;
+  if (status !== "done" && status !== "cancelled") return;
 
   const companyId = event.companyId;
+  const orgId = (cfg.acnOrgId ?? "").trim();
+
+  // P2c-C3: Org-backed issues → PATCH work status (preferred path).
+  const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+  const workId = reverseLookup(workMap, issueId);
+  if (workId && orgId) {
+    if (status === "done" && !cfg.autoApproveOnDone) {
+      ctx.logger.info("acn-plugin: skip Org work done — autoApproveOnDone=false", {
+        work_id: workId,
+        issue_id: issueId,
+      });
+      return;
+    }
+    try {
+      await orgApi.updateWorkStatus(orgId, workId, { status });
+      ctx.logger.info("acn-plugin: issue status → Org work PATCH", {
+        work_id: workId,
+        org_id: orgId,
+        issue_id: issueId,
+        status,
+      });
+    } catch (err) {
+      ctx.logger.error("acn-plugin: Org work status PATCH failed", {
+        work_id: workId,
+        org_id: orgId,
+        issue_id: issueId,
+        status,
+        error: String(err),
+      });
+    }
+    return;
+  }
+
+  // Legacy Task Pool review path.
   const taskIssueMap = await loadMap(ctx, STATE_KEYS.issueTaskMap, companyId);
   const taskId = reverseLookup(taskIssueMap, issueId);
   if (!taskId) return;
-
-  if (status !== "done" && status !== "cancelled") return;
 
   // Only call /review when ACN considers the task to be awaiting review
   // (`submitted`). For other statuses (open / in_progress / completed /...)
@@ -981,9 +1016,9 @@ const plugin = definePlugin({
       }
     }
 
-    // ── P0-4  Paperclip issue status → ACN review (legacy Task) ───────────────
+    // ── P2c-C3 / legacy: issue status → Org work PATCH or Task review ─────────
     ctx.events.on("issue.updated", async (event) => {
-      await handleIssueUpdated(ctx, cfg, client, event);
+      await handleIssueUpdated(ctx, cfg, client, orgApi, event);
     });
 
     // ── P2c-C1  Paperclip issue created → Org work ────────────────────────────

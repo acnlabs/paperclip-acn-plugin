@@ -94,10 +94,10 @@ const manifest: PaperclipPluginManifestV1 = {
       },
       autoApproveOnDone: {
         type: "boolean",
-        title: "Auto-approve ACN task when Paperclip issue moves to 'done' (legacy)",
+        title: "Sync 'done' to ACN when Paperclip issue completes",
         default: false,
         description:
-          "Legacy Task Pool review path. Org work status updates land in a later slice.",
+          "When true: Org-mapped issues PATCH work status to done; legacy Task-mirrored issues call /review approve. Cancelled always syncs.",
       },
     },
   },

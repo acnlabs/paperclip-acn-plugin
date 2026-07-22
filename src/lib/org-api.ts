@@ -1,10 +1,12 @@
 /**
- * Minimal Org Harness HTTP helpers (Phase 2c C0/C1).
+ * Minimal Org Harness HTTP helpers (Phase 2c C0–C3).
  *
  * `acn-client` 0.13.x has no Org APIs yet — call REST directly until the
  * published SDK catches up. Keep this surface tiny: resolve/create Org +
- * create work items.
+ * create/update work items.
  */
+
+export type OrgWorkStatus = "todo" | "in_progress" | "done" | "cancelled";
 
 export interface OrgRecord {
   org_id: string;
@@ -126,6 +128,22 @@ export class AcnOrgApi {
     return this.request<OrgWorkItem>(
       "POST",
       `/api/v1/orgs/${encodeURIComponent(orgId)}/work`,
+      body,
+    );
+  }
+
+  async updateWorkStatus(
+    orgId: string,
+    workId: string,
+    opts: { status: OrgWorkStatus; assignee_agent_id?: string | null },
+  ): Promise<OrgWorkItem> {
+    const body: Record<string, unknown> = { status: opts.status };
+    if (opts.assignee_agent_id != null && opts.assignee_agent_id !== "") {
+      body.assignee_agent_id = opts.assignee_agent_id;
+    }
+    return this.request<OrgWorkItem>(
+      "PATCH",
+      `/api/v1/orgs/${encodeURIComponent(orgId)}/work/${encodeURIComponent(workId)}`,
       body,
     );
   }

@@ -310,7 +310,7 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
     );
   }
 
-  // Org Harness path — no Task Pool review UI (status PATCH is C3).
+  // Org Harness path — no Task Pool review UI; done/cancelled sync via C3 PATCH.
   if (data.source === "org_work" || data.work_id) {
     return (
       <div style={styles.container}>
@@ -329,7 +329,8 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
           </div>
         ) : (
           <div style={{ ...styles.muted, marginTop: "8px" }}>
-            Linked via Org Harness Work Port. Issue status sync from Paperclip → ACN is C3.
+            Linked via Org Harness. Moving this issue to done/cancelled PATCHes Org work
+            status when autoApproveOnDone is enabled (done) or always (cancelled).
           </div>
         )}
       </div>
