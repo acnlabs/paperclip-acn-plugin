@@ -8,16 +8,13 @@ A [Paperclip](https://github.com/paperclipai/paperclip) plugin that connects ACN
 
 | Direction | Trigger | Action |
 |-----------|---------|--------|
-| ACN → Paperclip | `task.created` webhook | Create a Paperclip issue (`todo`) mirroring the ACN task |
-| ACN → Paperclip | `task.accepted` webhook | Move issue to `in_progress`, post the assignee as a comment |
-| ACN → Paperclip | `task.submitted` webhook | Move issue to `in_review`, prompt reviewer to open the ACN tab |
-| ACN → Paperclip | `task.completed` webhook | Move issue to `done`, post settlement comment |
-| ACN → Paperclip | `task.rejected` / `task.cancelled` | Move issue to `cancelled`, post reason |
-| ACN → Paperclip | `participation.rejected` | Post rejection reason + resubmit-count comment |
-| Paperclip → ACN | Issue **created** by a human (not by this plugin) | Create a corresponding ACN task in the configured subnet |
-| Paperclip → ACN | Issue moved to `done` (and `Auto-approve` enabled) | Call `/tasks/:id/review` → approve & settle |
-| Paperclip → ACN | Issue moved to `cancelled` | Call `/tasks/:id/review` → reject |
-| UI | ACN tab on issue | Show task ID, status, reward, participants; approve / reject pending submission |
+| Paperclip → ACN | Issue **created** by a human (not by this plugin) | Create **Org work** on the configured ACN Org (`POST /orgs/{id}/work`) — **not** Task Pool |
+| ACN → Paperclip | `org.work_created` / `org.work_updated` / `org.loop_tick` | Mirror Org work into Issues (preferred inbound) |
+| ACN → Paperclip | `task.*` webhooks (**legacy**) | Mirror Task Pool tasks into issues |
+| Paperclip → ACN | Issue moved to `done` / `cancelled` (**legacy**) | Task `/review` when the issue was created from a Task mirror (Org work status sync = C3) |
+| UI | ACN tab on issue | Shows `work_id` for Org-backed issues; Task fields for legacy mirrors |
+
+> **P2c C0–C2 (v0.2):** Org Harness Work Port for outbound create + inbound `org.*` webhooks. Configure **ACN Org ID** (or leave empty + set **ACN Subnet ID** so setup can `POST /orgs` once).
 
 > **Note (v0.1):** the plugin does **not** create or sync Paperclip agents from ACN. The Paperclip Plugin SDK does not yet expose a dynamic-agent-creation capability, so each agent type is provisioned independently (see *Agent topology* below).
 
@@ -77,6 +74,7 @@ Paperclip → **Instance Settings → Plugins → ACN**:
 | `acnBaseUrl` | no (default `https://api.acnlabs.dev`) | Base URL of the ACN instance (no trailing slash). Leave the default to use ACN Labs' hosted production, or set it to your self-hosted ACN. |
 | `paperclipBaseUrl` | **strongly recommended** | Publicly reachable base URL of **this** Paperclip instance (e.g. `https://app.paperclip.ai`). Used to construct the harness webhook URL ACN posts to. If omitted, the plugin still calls into ACN outbound (Paperclip → ACN direction works) but cannot register itself as a webhook target, so inbound ACN events will be lost. |
 | `acnApiKeyRef` | yes | Secret reference to the ACN agent API key (`acn_…`). Resolved at runtime via Paperclip's secret provider. |
+| `acnOrgId` | recommended | Existing Org id (`org_…`). If empty, setup creates an Org bound to `acnSubnetId` and persists it in plugin state. |
 | `acnHarnessSecretRef` | **strongly recommended** | Secret reference to the HMAC-SHA256 secret shared with ACN. The plugin verifies every inbound webhook against `X-ACN-Signature: sha256=<hex>`. **Leave blank only in trusted dev environments** — without a secret anyone who can reach `/api/plugins/acnlabs.acn/webhooks/acn-events` can forge ACN events. |
 | `acnSubnetId` | yes | The ACN subnet whose tasks this plugin syncs |
 | `autoCreateIssues` | no (default `true`) | Auto-create Paperclip issues for new ACN tasks |

@@ -13,7 +13,7 @@ const manifest: PaperclipPluginManifestV1 = {
   version: PLUGIN_VERSION,
   displayName: "ACN — Agent Collaboration Network",
   description:
-    "Connect Paperclip to ACN: sync tasks, manage agent identity, and settle work through the ACN protocol layer.",
+    "Connect Paperclip to ACN Org Harness: issues → Org work, identity/fencing via subnet, optional legacy Task mirror inbound.",
   author: "acnlabs",
   categories: ["connector", "automation"],
 
@@ -71,24 +71,33 @@ const manifest: PaperclipPluginManifestV1 = {
         description:
           "Secret reference to the shared HMAC-SHA256 secret used to sign and verify ACN harness webhook deliveries (X-ACN-Signature). Leave blank to skip verification (NOT recommended in production).",
       },
+      acnOrgId: {
+        type: "string",
+        title: "ACN Org ID",
+        default: "",
+        description:
+          "Existing Org Harness org_id (org_…). If empty, the plugin creates one bound to ACN Subnet ID on first setup and stores it in plugin state.",
+      },
       acnSubnetId: {
         type: "string",
         title: "ACN Subnet ID",
         default: "",
         description:
-          "The ACN subnet whose tasks this plugin syncs into Paperclip issues.",
+          "Fence subnet for harness webhooks. Required when ACN Org ID is empty (used to create/bind the Org). Prefer the Org's fence subnet.",
       },
       autoCreateIssues: {
         type: "boolean",
-        title: "Auto-create Paperclip issues for new ACN tasks",
+        title: "Auto-create Paperclip issues for new ACN tasks (legacy)",
         default: true,
+        description:
+          "Inbound task.* → Issue mirror. Outbound Issue create now writes Org work (not Task Pool).",
       },
       autoApproveOnDone: {
         type: "boolean",
-        title: "Auto-approve ACN task when Paperclip issue moves to 'done'",
+        title: "Auto-approve ACN task when Paperclip issue moves to 'done' (legacy)",
         default: false,
         description:
-          "When disabled, a board member must click Approve in the ACN tab to release payment.",
+          "Legacy Task Pool review path. Org work status updates land in a later slice.",
       },
     },
   },
@@ -96,9 +105,9 @@ const manifest: PaperclipPluginManifestV1 = {
   webhooks: [
     {
       endpointKey: WEBHOOK_KEYS.acnEvents,
-      displayName: "ACN Task Events",
+      displayName: "ACN Harness Events",
       description:
-        "Receives HMAC-signed lifecycle events from ACN (task.created, task.submitted, task.completed, ...).",
+        "Receives HMAC-signed lifecycle events from ACN (org.work_* / org.loop_tick preferred; task.* legacy).",
     },
   ],
 

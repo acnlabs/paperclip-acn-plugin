@@ -5,6 +5,35 @@ All notable changes to `@acnlabs/paperclip-plugin-acn` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-07-21
+
+### Changed
+
+- **P2c C0/C1 — Issue create → Org work.** Human-created Paperclip issues now
+  call `POST /api/v1/orgs/{org_id}/work` instead of Task Pool `createTask`.
+- **P2c C2 — Inbound `org.work_*` / `org.loop_tick`.** Harness webhooks for
+  Org work create/update mirror into Issues via `issue-work-map`; loop ticks
+  leave one throttled comment on the first mapped open work. In-flight binding
+  covers ACN's synchronous harness POST during `createWork` (no twin Issue);
+  late retries use a post-persist echo set. ACN issue tab renders Org work
+  ids without crashing on null Task fields. Note: for org.* events ACN's
+  `task_id` field carries `org_id` — the plugin keys off `event` + `data.work_id`.
+- New config `acnOrgId`. When empty, setup creates an Org bound to
+  `acnSubnetId` and stores the id in company-scoped plugin state.
+- New state map `issue-work-map` (`work_id` → issue id). Legacy
+  `issue-task-map` remains for inbound `task.*` mirroring and review.
+- On `subnet_already_bound` (409): reuse Org id from error message when
+  present; otherwise fail with an explicit “set `acnOrgId`” instruction.
+- Warn when `acnSubnetId` disagrees with the Org fence (prefer Org fence).
+- Warn when multiple Paperclip companies exist (only the first is bound).
+- `SKILL.md` rewritten for the Org work path (no longer teaches `createTask`).
+
+### Deprecated
+
+- Outbound Issue → Task Pool create (removed).
+- Inbound `task.*` mirror remains for transition; Issue → Task `/review` and
+  Issue → Org work status PATCH remain until **C3**.
+
 ## [0.1.1] - 2026-05-16
 
 ### Fixed
