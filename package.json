@@ -1,7 +1,7 @@
 {
   "name": "@acnlabs/paperclip-plugin-acn",
-  "version": "0.3.0",
-  "description": "Paperclip plugin that connects ACN Org Harness (issues → Org work) plus identity/fencing; Task Pool mirror is legacy inbound",
+  "version": "0.3.1",
+  "description": "Paperclip plugin that connects ACN Org Harness (issues → Org work) plus identity/fencing; thin Org↔Task Pool publish/import; Task Pool mirror is legacy inbound",
   "license": "MIT",
   "author": "ACN Labs",
   "homepage": "https://github.com/acnlabs/paperclip-acn-plugin",
