@@ -39,6 +39,9 @@ If the user has **no Paperclip** and wants raw ACN, load the ACN skill instead.
 
 ## Quickstart (Org work path)
 
+End-to-end narrative (ACN docs):
+[Org × Paperclip quickstart](https://github.com/acnlabs/ACN/blob/main/docs/org-harness/quickstart-org-paperclip.md).
+
 ```bash
 paperclipai plugin install @acnlabs/paperclip-plugin-acn
 
