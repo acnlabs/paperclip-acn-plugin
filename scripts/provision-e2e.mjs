@@ -3,25 +3,28 @@
  * One-shot provisioner for the paperclip-acn-plugin E2E smoke.
  *
  * Steps:
- *  1. Register a long-lived "paperclip-bridge" agent on ACN → grab api_key.
- *  2. Create an ACN subnet owned by that agent.
+ *  1. Register a long-lived bridge agent on ACN → grab api_key.
+ *  2. Create an ACN subnet owned by that agent (join if needed).
+ *  2c. Create an ACN Org fenced on that subnet (Work Port / builtin_work).
  *  3. Generate a random 32-byte hex harness HMAC secret.
  *  4. Upsert 2 secrets in Paperclip (acn-api-key, acn-harness-secret) on the
  *     ACN PoC Company.
- *  5. POST plugin config to Paperclip so the worker picks up the new values
- *     (which also triggers registerSubnetHarness on the ACN side).
+ *  5. POST plugin config (acnOrgId + autoApproveOnDone) so the worker can
+ *     mirror Issue ↔ Org work (harness register needs a public paperclipBaseUrl).
  *
- * Idempotent: re-running creates a fresh agent + subnet (no name reuse) and
+ * Idempotent: re-running creates a fresh agent + subnet + Org and
  * overwrites the secrets and plugin config in place.
  *
  * Env overrides:
- *   ACN_URL              default http://127.0.0.1:9000
- *   PAPERCLIP_URL        default http://127.0.0.1:3100
- *   PAPERCLIP_COMPANY_ID default 5e6a3397-fb99-4899-aeb1-c6f8b2396e9a (ACN PoC Company)
- *   PLUGIN_KEY           default acnlabs.acn
+ *   ACN_URL                   default http://127.0.0.1:9000
+ *   PAPERCLIP_URL             default http://127.0.0.1:3100
+ *   PAPERCLIP_COMPANY_ID      default 5e6a3397-fb99-4899-aeb1-c6f8b2396e9a
+ *   PLUGIN_KEY                default acnlabs.acn
+ *   ACN_BRIDGE_A2A_ENDPOINT   override join a2a_endpoint (required public when
+ *                             PAPERCLIP_URL is loopback against hosted ACN)
  *
- * Output: writes the resolved IDs/keys to scripts/e2e-state.json so other
- *         smoke scripts can pick them up without re-provisioning.
+ * Output: writes IDs/keys (including orgId) to scripts/e2e-state.json for
+ *         scripts/e2e-org-work.mjs and legacy smokes.
  */
 
 import crypto from "node:crypto";
@@ -66,13 +69,21 @@ function step(name) {
 async function main() {
   // ── 1. Register ACN agent ───────────────────────────────────────────────
   step("register ACN bridge agent");
+  // a2a_endpoint must be a publicly reachable URL when talking to hosted ACN
+  // (private/loopback hosts are rejected). Harness webhook URL is registered
+  // separately via paperclipBaseUrl; use a sink endpoint here for join.
+  const a2aEndpoint =
+    process.env.ACN_BRIDGE_A2A_ENDPOINT ??
+    (PAPERCLIP_URL.includes("127.0.0.1") || PAPERCLIP_URL.includes("localhost")
+      ? `https://example.com/paperclip-bridge-sink/${stamp}`
+      : `${PAPERCLIP_URL}/api/plugins/${PLUGIN_KEY}/webhooks/acn`);
   const bridge = await jsonFetch(`${ACN_URL}/api/v1/agents/join`, {
     method: "POST",
     body: JSON.stringify({
-      name: `paperclip-bridge-${stamp}`,
+      name: `Paperclip Bridge ${stamp}`,
       description:
-        "Long-lived bridge agent used by paperclip-acn-plugin to mirror ACN tasks into Paperclip issues. Auto-provisioned for local E2E smoke.",
-      a2a_endpoint: `${PAPERCLIP_URL}/api/plugins/${PLUGIN_KEY}/webhooks/acn`,
+        "Long-lived bridge agent used by paperclip-acn-plugin to mirror ACN Org work into Paperclip issues. Auto-provisioned for local E2E smoke.",
+      a2a_endpoint: a2aEndpoint,
       tags: ["bridge", "paperclip"],
     }),
   });
@@ -84,11 +95,15 @@ async function main() {
     method: "POST",
     headers: { Authorization: `Bearer ${bridge.api_key}` },
     body: JSON.stringify({
-      name: `paperclip-e2e-${stamp}`,
+      name: `Paperclip E2E ${stamp}`,
       description: "E2E smoke subnet for paperclip-acn-plugin",
     }),
   });
-  console.log("  subnet_id =", subnet.subnet_id);
+  const subnetId = subnet.slug ?? subnet.subnet_id;
+  if (!subnetId) {
+    throw new Error(`subnet create missing slug/subnet_id: ${JSON.stringify(subnet)}`);
+  }
+  console.log("  subnet_id =", subnetId);
 
   // ── 2b. Bridge joins its own subnet ─────────────────────────────────────
   // ACN treats subnet owner ≠ subnet member: GET /tasks/{id} on a private
@@ -96,10 +111,31 @@ async function main() {
   // though it created the subnet. Tracked as separate ACN backend TODO.
   step("bridge joins subnet (workaround for owner-not-member)");
   // Canonical agent-side route since ACN backend PR #42 / acn-client 0.11.2.
-  await jsonFetch(`${ACN_URL}/api/v1/agents/${bridge.agent_id}/subnets/${subnet.subnet_id}`, {
+  // Hosted ACN may already treat subnet creator as a member → 409 is fine.
+  try {
+    await jsonFetch(`${ACN_URL}/api/v1/agents/${bridge.agent_id}/subnets/${subnetId}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bridge.api_key}` },
+    });
+  } catch (err) {
+    if (err.status === 409 && err.body?.error_code === "already_member") {
+      console.log("  already a member — ok");
+    } else {
+      throw err;
+    }
+  }
+
+  // ── 2c. Create Org (Work Port default: builtin_work) ────────────────────
+  step("create ACN Org for Paperclip company");
+  const org = await jsonFetch(`${ACN_URL}/api/v1/orgs`, {
     method: "POST",
     headers: { Authorization: `Bearer ${bridge.api_key}` },
+    body: JSON.stringify({
+      display_name: `Paperclip E2E ${stamp}`,
+      subnet_id: subnetId,
+    }),
   });
+  console.log("  org_id =", org.org_id);
 
   // ── 3. Generate harness secret ──────────────────────────────────────────
   const harnessSecret = crypto.randomBytes(32).toString("hex");
@@ -153,12 +189,13 @@ async function main() {
   // / {harnessSecretRow.id} — no plugin code change required.
   const configJson = {
     acnBaseUrl: ACN_URL,
-    acnSubnetId: subnet.subnet_id,
+    acnSubnetId: subnetId,
+    acnOrgId: org.org_id,
     acnApiKeyRef: bridge.api_key,
     acnHarnessSecretRef: harnessSecret,
     paperclipBaseUrl: PAPERCLIP_URL,
     autoCreateIssues: true,
-    autoApproveOnDone: false,
+    autoApproveOnDone: true,
   };
   const cfgRes = await jsonFetch(
     `${PAPERCLIP_URL}/api/plugins/${PLUGIN_KEY}/config`,
@@ -173,7 +210,8 @@ async function main() {
   const state = {
     agentId: bridge.agent_id,
     apiKey: bridge.api_key,
-    subnetId: subnet.subnet_id,
+    subnetId,
+    orgId: org.org_id,
     harnessSecret,
     companyId: COMPANY_ID,
     pluginKey: PLUGIN_KEY,
