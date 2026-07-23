@@ -15,7 +15,7 @@ import type { PluginContext, PluginEvent } from "@paperclipai/plugin-sdk";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import { ACNClient, type Task } from "acn-client";
 import { PLUGIN_ID, STATE_KEYS, WEBHOOK_KEYS } from "./constants.js";
-import { AcnHttpError, AcnOrgApi, orgSubnetId } from "./lib/org-api.js";
+import { ACNError, AcnOrgApi, orgSubnetId } from "./lib/org-api.js";
 import { verifyAcnSignature } from "./lib/signature.js";
 import { shouldSkipPluginEcho } from "./lib/echo-guard.js";
 import { resolveSecretOrLiteral } from "./lib/secrets.js";
@@ -295,7 +295,7 @@ export async function resolveAcnOrg(
     });
     return created.org_id;
   } catch (err) {
-    if (err instanceof AcnHttpError && err.status === 409) {
+    if (err instanceof ACNError && err.status === 409) {
       const hint = err.boundOrgIdHint;
       if (hint) {
         ctx.logger.warn(
@@ -370,7 +370,10 @@ async function syncTasks(
   const updated = { ...taskIssueMap };
 
   for (const task of allTasks) {
-    if (task.subnet_id !== cfg.acnSubnetId) continue;
+    const taskSubnet =
+      (task as Task & { subnet_id?: string | null }).subnet_slug ??
+      (task as Task & { subnet_id?: string | null }).subnet_id;
+    if (taskSubnet !== cfg.acnSubnetId) continue;
     if (updated[task.task_id]) continue;
 
     try {

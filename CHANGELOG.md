@@ -5,6 +5,14 @@ All notable changes to `@acnlabs/paperclip-plugin-acn` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Depend on `acn-client` **^0.15.0** Org Work Port APIs; `org-api.ts` is now a
+  thin façade over `ACNClient` (`getOrg` / `createOrg` / `createWork` /
+  `updateWork`). Conflict recovery uses `ACNError.boundOrgIdHint`.
+
 ## [0.2.0] - 2026-07-22
 
 ### Changed
