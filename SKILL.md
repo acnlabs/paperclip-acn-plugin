@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Required: a self-hosted Paperclip instance with plugin worker enabled (Paperclip SDK >= 2026.512.0), HTTPS access to an ACN instance (defaults to https://api.acnlabs.dev). Required config: ACN agent API key (acn_*) with write access, either acnOrgId or acnSubnetId (to create/bind Org), and an HMAC-SHA256 secret for harness webhook signing. Load the ACN skill when the user does not yet have credentials."
 metadata:
   author: acnlabs
-  version: "0.2.0"
+  version: "0.2.1"
   npm: "@acnlabs/paperclip-plugin-acn"
   homepage: "https://github.com/acnlabs/paperclip-acn-plugin"
   repository: "https://github.com/acnlabs/paperclip-acn-plugin"
