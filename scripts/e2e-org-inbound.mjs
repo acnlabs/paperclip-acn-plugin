@@ -107,36 +107,46 @@ async function main() {
       throw err;
     }
   }
-  // Org membership may be required to create work — try steward path via bridge
-  // if external create fails with 403.
+  // create_work is governance-only (unclaimed Org → created_by / claimed →
+  // owner). Joining the subnet or Org membership does NOT grant create.
+  // Bridge agent created the Org in provision-e2e, so it is created_by.
   console.log("  external.agent_id =", external.agent_id);
 
   const title = `E2E inbound org-work ${STAMP}`;
-  console.log("\nA — create Org work (external) → expect Paperclip Issue");
+  console.log("\nA — create Org work (bridge governance) → expect Paperclip Issue");
   const before = await listIssues();
   const beforeIds = new Set(before.map((i) => i.id));
 
-  let work;
+  // Demonstrate external non-governance 403, then create as bridge.
   try {
-    work = await jsonFetch(`${acnUrl}/api/v1/orgs/${orgId}/work`, {
+    await jsonFetch(`${acnUrl}/api/v1/orgs/${orgId}/work`, {
       method: "POST",
       headers: { Authorization: `Bearer ${external.api_key}` },
       body: JSON.stringify({
-        title,
+        title: `${title} (should-403)`,
         assignee_agent_id: external.agent_id,
       }),
     });
+    console.log("  ⚠ external create unexpectedly succeeded");
   } catch (err) {
-    console.log("  external create failed (", err.status, ") — retry as bridge");
-    work = await jsonFetch(`${acnUrl}/api/v1/orgs/${orgId}/work`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        title,
-        assignee_agent_id: external.agent_id,
-      }),
-    });
+    const reason = err.body?.details?.reason ?? "?";
+    console.log(
+      "  ✓ external create 403 as expected (",
+      err.status,
+      "reason=",
+      reason,
+      ")",
+    );
   }
+
+  const work = await jsonFetch(`${acnUrl}/api/v1/orgs/${orgId}/work`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      title,
+      assignee_agent_id: external.agent_id,
+    }),
+  });
   console.log("  work_id =", work.work_id, "status =", work.status);
 
   const issue = await waitFor(async () => {
