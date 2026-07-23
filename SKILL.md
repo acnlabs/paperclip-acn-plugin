@@ -86,7 +86,8 @@ Copy the logged `org_id` into `acnOrgId` for stable restarts.
 | `acnHarnessSecretRef` | strongly recommended | HMAC for inbound harness webhooks |
 | `paperclipBaseUrl` | strongly recommended | Public Paperclip URL for webhook registration |
 | `acnBaseUrl` | no | Default `https://api.acnlabs.dev` |
-| `autoCreateIssues` | no | Legacy: inbound `task.*` → Issue |
+| `autoCreateIssues` | no (default `true`) | Inbound `org.work_created` → create Issue |
+| `enableLegacyTaskMirror` | no (default `false`) | Opt-in: `task.created` + startup Task sync → Issue |
 | `autoApproveOnDone` | no | Issue done → Org work PATCH (or legacy Task `/review`) |
 
 **Subnet already bound:** if create Org returns 409 and the error message includes
@@ -115,11 +116,16 @@ State: company-scoped `issue-work-map` (`work_id` → issue id).
 | `org.work_updated` | Sync Issue status (`todo`/`done`/`cancelled`); `in_progress` → comment only |
 | `org.loop_tick` | Comment on mapped open Issues (no L1 wakeup) |
 
-### ACN → Paperclip (legacy)
+### ACN → Paperclip (legacy, opt-in)
+
+Requires `enableLegacyTaskMirror=true` to **create** Issues from Task Pool
+(`task.created` + startup sync). Lifecycle events on **already-mapped** Issues
+still apply when the flag is off.
 
 | Event | Effect |
 |---|---|
-| `task.*` / `participation.*` | Mirror into Issues (same as 0.1.x) |
+| `task.created` | Create Issue (flag on only) |
+| `task.*` / `participation.*` (mapped) | Status / comments |
 
 Issue done/cancelled → Task `/review` only when the issue was Task-mirrored (`issue-task-map`).
 
