@@ -189,7 +189,7 @@ describe("handleOrgWorkUpdated", () => {
 });
 
 describe("handleOrgLoopTick", () => {
-  it("comments once on first mapped open work", async () => {
+  it("comments on every mapped open work in the tick", async () => {
     const { ctx, issues, companyId } = makeCtx({
       workMap: { work_a: "iss-a", work_b: "iss-b" },
     });
@@ -199,8 +199,11 @@ describe("handleOrgLoopTick", () => {
       work_ids: ["work_a", "work_b"],
     });
     assert.equal(issues.create.calls.length, 0);
-    assert.equal(issues.createComment.calls.length, 1);
-    assert.equal(issues.createComment.calls[0]![0], "iss-a");
+    assert.equal(issues.createComment.calls.length, 2);
+    assert.deepEqual(
+      issues.createComment.calls.map((c) => c[0]),
+      ["iss-a", "iss-b"],
+    );
   });
 
   it("throttles repeated ticks within cooldown", async () => {
