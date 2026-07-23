@@ -7,6 +7,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-23
+
 ### Changed
 
 - **Legacy Task Pool mirror is opt-in.** New config `enableLegacyTaskMirror`
@@ -21,6 +23,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **`org.loop_tick` comments:** comment on every mapped open work in the tick
   payload (Redis set order made "first only" nondeterministic). Log cooldown
   skips and comment targets.
+- Manifest `PLUGIN_VERSION` was stuck at `0.2.0`; now tracks the package
+  version (`0.3.0`).
 
 ## [0.2.1] - 2026-07-23
 
