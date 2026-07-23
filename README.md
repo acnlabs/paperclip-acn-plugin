@@ -10,7 +10,7 @@ A [Paperclip](https://github.com/paperclipai/paperclip) plugin that connects ACN
 |-----------|---------|--------|
 | Paperclip → ACN | Issue **created** by a human (not by this plugin) | Create **Org work** on the configured ACN Org (`POST /orgs/{id}/work`) — **not** Task Pool |
 | ACN → Paperclip | `org.work_created` / `org.work_updated` / `org.loop_tick` | Mirror Org work into Issues (preferred inbound) |
-| ACN → Paperclip | `task.*` webhooks (**legacy**) | Mirror Task Pool tasks into issues |
+| ACN → Paperclip | `task.*` webhooks (**legacy**, opt-in) | Mirror Task Pool tasks into issues when `enableLegacyTaskMirror` is on |
 | Paperclip → ACN | Issue moved to `done` / `cancelled` | Org work `PATCH` when linked via `issue-work-map`; Task `/review` only for legacy Task mirrors |
 | UI | ACN tab on issue | Shows `work_id` for Org-backed issues; Task fields for legacy mirrors |
 
@@ -77,7 +77,8 @@ Paperclip → **Instance Settings → Plugins → ACN**:
 | `acnOrgId` | recommended | Existing Org id (`org_…`). If empty, setup creates an Org bound to `acnSubnetId` and persists it in plugin state. |
 | `acnHarnessSecretRef` | **strongly recommended** | Secret reference to the HMAC-SHA256 secret shared with ACN. The plugin verifies every inbound webhook against `X-ACN-Signature: sha256=<hex>`. **Leave blank only in trusted dev environments** — without a secret anyone who can reach `/api/plugins/acnlabs.acn/webhooks/acn-events` can forge ACN events. |
 | `acnSubnetId` | yes | The ACN subnet whose tasks this plugin syncs |
-| `autoCreateIssues` | no (default `true`) | Auto-create Paperclip issues for new ACN tasks |
+| `autoCreateIssues` | no (default `true`) | Auto-create Paperclip issues for inbound Org work (`org.work_created`) |
+| `enableLegacyTaskMirror` | no (default `false`) | Opt-in legacy Task Pool → Issue mirror (`task.created` + startup sync). Prefer Org inbound. Mapped Task lifecycle still works when off. |
 | `autoApproveOnDone` | no (default `false`) | When a Paperclip user moves a linked issue to `done`: Org-mapped issues PATCH work status; legacy Task mirrors call `/review?approved=true`. Off by default. `cancelled` always syncs. |
 
 ### 3. Verify
@@ -86,7 +87,7 @@ On worker startup the plugin:
 
 1. Resolves the API key and harness secret
 2. PATCHes `/api/v1/subnets/:id/harness` to register itself as the Org Harness (URL + secret)
-3. Does a full pull of `status in (open, in_progress, submitted)` ACN tasks for the subnet and mirrors them as Paperclip issues
+3. If `enableLegacyTaskMirror` is on: full pull of open Task Pool tasks for the subnet → Paperclip issues (skipped by default)
 4. Subscribes to `issue.created` / `issue.updated` events
 
 Successful boot logs (visible in **Instance Settings → Plugins → ACN → Logs**):
@@ -100,23 +101,31 @@ If `signed: false` appears, the HMAC secret was **not** configured — the plugi
 
 ## Usage
 
-### ACN task → Paperclip issue
+### ACN Org work → Paperclip issue (preferred)
 
-When a task is created in the configured subnet, ACN posts `task.created` to the harness URL. The plugin verifies the HMAC signature, fetches full task details, then creates a Paperclip issue:
+External `org.work_created` (when `autoCreateIssues` is on) creates a Paperclip
+issue and stores `issue-work-map`. `org.work_updated` syncs status;
+`org.loop_tick` leaves a throttled comment on mapped open issues.
+
+### ACN task → Paperclip issue (legacy)
+
+Requires **`enableLegacyTaskMirror=true`**. When a task is created in the
+configured subnet, ACN posts `task.created`; the plugin creates a Paperclip
+issue. Already-mapped issues still receive lifecycle updates when the flag is off:
 
 | ACN event | Paperclip issue status |
 |---|---|
-| `task.created` | `todo` |
-| `task.accepted` | `in_progress` |
+| `task.created` | `todo` (flag on only) |
+| `task.accepted` | comment (status unchanged) |
 | `task.submitted` | `in_review` |
 | `task.completed` | `done` |
 | `task.rejected` / `task.cancelled` | `cancelled` |
 
-Each transition is annotated with a comment summarising the event (assignee, settlement note, rejection reason, …).
+### Paperclip issue → ACN Org work
 
-### Paperclip issue → ACN task
-
-When a Paperclip user creates an issue **that did not originate from this plugin** (detected via `event.actorType` and `originKind`), the plugin creates a matching ACN task with `reward: "0"` and `deadline_hours: 168` (7 days). Tune these defaults by extending `handleIssueCreated()` in `src/worker.ts`.
+When a Paperclip user creates an issue **that did not originate from this plugin**
+(detected via `event.actorType` and `originKind`), the plugin creates Org work
+via `POST /orgs/{acnOrgId}/work` (not Task Pool).
 
 ### Manual review (ACN tab)
 

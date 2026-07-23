@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 /**
- * E2E test 1 — ACN → Paperclip direction:
+ * E2E test 1 — ACN → Paperclip (legacy Task Pool mirror):
+ *
+ * Requires plugin config `enableLegacyTaskMirror=true`. Re-provision with:
+ *   ENABLE_LEGACY_TASK_MIRROR=1 node scripts/provision-e2e.mjs
+ * Prefer `scripts/e2e-org-inbound.mjs` for the Org Harness path.
  *
  *   1. Pre-count Paperclip issues for the configured company.
  *   2. Create a fresh ACN task on the bridge subnet.

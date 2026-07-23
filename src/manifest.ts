@@ -87,10 +87,17 @@ const manifest: PaperclipPluginManifestV1 = {
       },
       autoCreateIssues: {
         type: "boolean",
-        title: "Auto-create Paperclip issues for new ACN tasks (legacy)",
+        title: "Auto-create Paperclip issues for inbound Org work",
         default: true,
         description:
-          "Inbound task.* → Issue mirror. Outbound Issue create now writes Org work (not Task Pool).",
+          "When true, external org.work_created webhooks create a Paperclip Issue. Does not control Task Pool mirroring.",
+      },
+      enableLegacyTaskMirror: {
+        type: "boolean",
+        title: "Enable legacy Task Pool → Issue mirror",
+        default: false,
+        description:
+          "Opt-in: task.created creates Issues and startup syncs open Task Pool tasks. Prefer Org org.* inbound. Already-mapped Task Issues still receive lifecycle updates when off.",
       },
       autoApproveOnDone: {
         type: "boolean",

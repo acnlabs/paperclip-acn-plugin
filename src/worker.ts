@@ -3,9 +3,11 @@
  *
  * Responsibilities:
  *  P0-1  Startup  : resolve/create ACN Org; register subnet harness webhook
- *  P0-2  Startup  : full sync — pull open ACN tasks → Paperclip issues (legacy)
- *  P0-3  ACN→PC   : task.* webhook events → sync Paperclip issue status / comments (legacy)
- *  P0-4  PC→ACN   : Paperclip issue done/cancelled → ACN task review (legacy)
+ *  P0-2  Startup  : full sync — pull open ACN tasks → Paperclip issues
+ *                   (legacy; only when enableLegacyTaskMirror)
+ *  P0-3  ACN→PC   : task.* webhooks → Issue create/status (legacy;
+ *                   create gated by enableLegacyTaskMirror; mapped lifecycle always)
+ *  P0-4  PC→ACN   : Paperclip issue done/cancelled → ACN task review (legacy mapped)
  *  P2c-C1 PC→ACN  : Paperclip issue created → Org work (NOT Task Pool)
  *  P2c-C2 ACN→PC  : org.work_* / org.loop_tick → Issues (preferred inbound)
  *  P2c-C3 PC→ACN  : Paperclip issue done/cancelled → PATCH Org work status
@@ -31,8 +33,22 @@ export interface PluginConfig {
   /** Org Harness org_id; auto-created + persisted when empty. */
   acnOrgId?: string;
   acnSubnetId?: string;
+  /**
+   * When true, inbound `org.work_created` (external) creates a Paperclip Issue.
+   * Does **not** control Task Pool mirroring — see `enableLegacyTaskMirror`.
+   */
   autoCreateIssues?: boolean;
+  /**
+   * Opt-in legacy Task Pool → Issue mirror: `task.created` create + startup
+   * `syncTasks`. Mapped `task.*` lifecycle / review still work when false.
+   * Default false — prefer Org `org.*` inbound.
+   */
+  enableLegacyTaskMirror?: boolean;
   autoApproveOnDone?: boolean;
+}
+
+function legacyTaskMirrorEnabled(cfg: PluginConfig): boolean {
+  return cfg.enableLegacyTaskMirror === true;
 }
 
 // ── ACN webhook event payload ─────────────────────────────────────────────────
@@ -617,7 +633,8 @@ export async function handleOrgLoopTick(
 
 // ── ACN webhook event handler ─────────────────────────────────────────────────
 
-async function handleAcnWebhook(
+/** Exported for unit tests (legacy task.* gating). */
+export async function handleAcnWebhook(
   ctx: PluginContext,
   cfg: PluginConfig,
   client: ACNClient,
@@ -666,14 +683,17 @@ async function handleAcnWebhook(
 
   switch (payload.event) {
     case "task.created": {
-      if (!cfg.autoCreateIssues) break;
+      if (!legacyTaskMirrorEnabled(cfg)) {
+        ctx.logger.info(
+          "acn-plugin: skipping task.created — enableLegacyTaskMirror=false",
+          { task_id },
+        );
+        break;
+      }
       if (taskIssueMap[task_id]) break;
-      // Echo guard: skip tasks the bridge agent itself created. The plugin's
-      // legacy outbound path also called ACN createTask synchronously,
-      // which fires this very `task.created` webhook *before* `saveMap` has
-      // had a chance to persist the mapping. The map check above will miss
-      // and we'd ghost-mirror our own outbound task back into a second
-      // Paperclip issue. Comparing against `_selfAgentId` closes that race.
+      // Echo guard: skip tasks the bridge agent itself created. Historical
+      // outbound createTask fired this webhook before saveMap persisted the
+      // mapping; comparing against `_selfAgentId` closes that race.
       if (_selfAgentId && data.creator_id === _selfAgentId) {
         ctx.logger.info("acn-plugin: skipping task.created (self-created, echo guard)", {
           task_id,
@@ -1026,8 +1046,8 @@ const plugin = definePlugin({
       ctx.logger.warn("acn-plugin: no subnet_id after Org resolve — skipping harness registration");
     }
 
-    // ── P0-2  Full initial task sync (legacy inbound) ─────────────────────────
-    if (companyId && subnetId) {
+    // ── P0-2  Full initial task sync (legacy; opt-in) ─────────────────────────
+    if (companyId && subnetId && legacyTaskMirrorEnabled(cfg)) {
       let taskIssueMap = await loadMap(ctx, STATE_KEYS.issueTaskMap, companyId);
       try {
         taskIssueMap = await syncTasks(ctx, client, cfg, companyId, taskIssueMap);
@@ -1035,6 +1055,10 @@ const plugin = definePlugin({
       } catch (err) {
         ctx.logger.error("acn-plugin: task full sync failed", { error: String(err) });
       }
+    } else if (companyId && subnetId) {
+      ctx.logger.info(
+        "acn-plugin: skipping legacy task full sync — enableLegacyTaskMirror=false",
+      );
     }
 
     // ── P2c-C3 / legacy: issue status → Org work PATCH or Task review ─────────

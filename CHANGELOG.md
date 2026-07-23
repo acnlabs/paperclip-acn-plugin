@@ -7,6 +7,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+
+- **Legacy Task Pool mirror is opt-in.** New config `enableLegacyTaskMirror`
+  (default `false`) gates `task.created` → Issue create and startup
+  `syncTasks`. Prefer Org `org.*` inbound. Already-mapped Task Issues still
+  receive `task.*` lifecycle updates and `/review` when the flag is off.
+- **`autoCreateIssues`** now only controls inbound `org.work_created` Issue
+  create (default remains `true`). It no longer gates Task Pool mirroring.
+
 ### Fixed
 
 - **`org.loop_tick` comments:** comment on every mapped open work in the tick

@@ -116,6 +116,7 @@ const baseCfg = {
   acnOrgId: "org_test",
   acnSubnetId: "sub-1",
   autoCreateIssues: true,
+  enableLegacyTaskMirror: false,
   autoApproveOnDone: true,
 };
 

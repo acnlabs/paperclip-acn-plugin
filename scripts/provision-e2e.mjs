@@ -195,6 +195,9 @@ async function main() {
     acnHarnessSecretRef: harnessSecret,
     paperclipBaseUrl: PAPERCLIP_URL,
     autoCreateIssues: true,
+    // Legacy Task Pool → Issue mirror is off by default. Set
+    // ENABLE_LEGACY_TASK_MIRROR=1 when running scripts/e2e-acn-to-paperclip.mjs.
+    enableLegacyTaskMirror: process.env.ENABLE_LEGACY_TASK_MIRROR === "1",
     autoApproveOnDone: true,
   };
   const cfgRes = await jsonFetch(
