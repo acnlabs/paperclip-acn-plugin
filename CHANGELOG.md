@@ -9,6 +9,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Docs
 
+- Rewrite README for Paperclip users: value prop, shortest install,
+  success criteria, troubleshooting; ACN design docs as deep links.
 - Link ACN Org × Paperclip quickstart from README / SKILL.
 
 ## [0.3.0] - 2026-07-23
