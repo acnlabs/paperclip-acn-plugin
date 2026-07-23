@@ -42,7 +42,7 @@
   },
   "dependencies": {
     "@paperclipai/plugin-sdk": "^2026.512.0",
-    "acn-client": "^0.13.0"
+    "acn-client": "^0.15.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
