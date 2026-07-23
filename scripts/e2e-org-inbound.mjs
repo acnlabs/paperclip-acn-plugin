@@ -202,14 +202,17 @@ async function main() {
         const list = Array.isArray(comments)
           ? comments
           : (comments.comments ?? []);
-        return list.length > 0 ? list : null;
-      }, "loop_tick comment");
-      console.log("  ✓ loop_tick comment present");
+        const hit = list.find((c) =>
+          String(c.body ?? c.content ?? "").includes("Org loop tick"),
+        );
+        return hit ?? null;
+      }, "loop_tick comment on open Issue");
+      console.log("  ✓ loop_tick comment present on", openIssue.id);
     } catch {
       console.log(
-        "  ⚠ no comment within timeout (work_id=",
+        "  ⚠ no loop_tick comment within timeout (work_id=",
         openWork.work_id,
-        ") — tick may be throttled",
+        ") — cooldown is 5m; restart plugin worker to clear",
       );
     }
   } catch (err) {

@@ -7,6 +7,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+
+- **`org.loop_tick` comments:** comment on every mapped open work in the tick
+  payload (Redis set order made "first only" nondeterministic). Log cooldown
+  skips and comment targets.
+
 ## [0.2.1] - 2026-07-23
 
 ### Changed

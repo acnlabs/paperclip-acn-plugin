@@ -579,11 +579,17 @@ export async function handleOrgLoopTick(
 
   const now = Date.now();
   if (now - _lastLoopTickCommentAt < LOOP_TICK_COMMENT_COOLDOWN_MS) {
+    ctx.logger.info("acn-plugin: org.loop_tick comment skipped — cooldown", {
+      org_id: orgId,
+      cooldown_ms: LOOP_TICK_COMMENT_COOLDOWN_MS,
+    });
     return;
   }
 
   const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
-  // One comment per tick (first mapped open work) to avoid comment spam.
+  // Comment on every mapped open work in this tick (not just the first id —
+  // Redis set order is arbitrary, so "first" was nondeterministic).
+  let commented = 0;
   for (const workId of workIds) {
     const issueId = workMap[workId];
     if (!issueId) continue;
@@ -592,9 +598,21 @@ export async function handleOrgLoopTick(
       `Org loop tick — ${openCount} open work item(s) on ACN.`,
       companyId,
     );
-    _lastLoopTickCommentAt = now;
-    break;
+    commented += 1;
+    ctx.logger.info("acn-plugin: org.loop_tick → comment", {
+      work_id: workId,
+      issue_id: issueId,
+      org_id: orgId,
+    });
   }
+  if (commented === 0) {
+    ctx.logger.info("acn-plugin: org.loop_tick — no mapped Issues for work_ids", {
+      org_id: orgId,
+      work_ids: workIds,
+    });
+    return;
+  }
+  _lastLoopTickCommentAt = now;
 }
 
 // ── ACN webhook event handler ─────────────────────────────────────────────────
