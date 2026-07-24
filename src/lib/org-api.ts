@@ -53,6 +53,10 @@ export type OrgPublishedTask = {
   task_id: string;
   title: string;
   status: string;
+  creator_type?: string;
+  creator_id?: string;
+  reward_currency?: string;
+  use_escrow?: boolean;
   subnet_slug?: string | null;
   metadata?: Record<string, unknown>;
 };
@@ -119,8 +123,9 @@ export class AcnOrgApi {
   }
 
   /**
-   * Publish a network Task attributed to an Org (`metadata.org_id`).
-   * Uses agent create path; `acn-client` TaskCreateRequest omits metadata today.
+   * Publish a network Task attributed to an Org (org-task-bridge / org-wallet-v0).
+   * Uses `POST /orgs/{id}/publish-task`. When `pay_from_org`, Org treasury pays
+   * (credits + escrow if reward > 0).
    */
   publishTaskForOrg(
     orgId: string,
@@ -129,21 +134,25 @@ export class AcnOrgApi {
       description: string;
       required_tags: string[];
       reward?: string;
-      reward_currency?: string;
       deadline_hours?: number;
       task_type?: string;
+      pay_from_org?: boolean;
+      fence?: boolean;
     },
   ): Promise<OrgPublishedTask> {
-    return this.postJson<OrgPublishedTask>("/api/v1/tasks/agent/create", {
-      title: opts.title,
-      description: opts.description,
-      required_tags: opts.required_tags,
-      reward: opts.reward ?? "0",
-      reward_currency: opts.reward_currency ?? "ap_points",
-      deadline_hours: opts.deadline_hours ?? 48,
-      task_type: opts.task_type ?? "general",
-      metadata: { org_id: orgId, org_publish: true },
-    });
+    return this.postJson<OrgPublishedTask>(
+      `/api/v1/orgs/${encodeURIComponent(orgId)}/publish-task`,
+      {
+        title: opts.title,
+        description: opts.description,
+        required_tags: opts.required_tags,
+        reward: opts.reward ?? "0",
+        deadline_hours: opts.deadline_hours ?? 48,
+        task_type: opts.task_type ?? "general",
+        pay_from_org: Boolean(opts.pay_from_org),
+        fence: Boolean(opts.fence),
+      },
+    );
   }
 
   private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {

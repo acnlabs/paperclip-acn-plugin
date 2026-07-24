@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Required: a self-hosted Paperclip instance with plugin worker enabled (Paperclip SDK >= 2026.512.0), HTTPS access to an ACN instance (defaults to https://api.acnlabs.dev). Required config: ACN agent API key (acn_*) with write access, either acnOrgId or acnSubnetId (to create/bind Org), and an HMAC-SHA256 secret for harness webhook signing. Load the ACN skill when the user does not yet have credentials."
 metadata:
   author: acnlabs
-  version: "0.3.1"
+  version: "0.3.2"
   npm: "@acnlabs/paperclip-plugin-acn"
   homepage: "https://github.com/acnlabs/paperclip-acn-plugin"
   repository: "https://github.com/acnlabs/paperclip-acn-plugin"
@@ -20,7 +20,7 @@ Bridges [Paperclip](https://github.com/paperclipai/paperclip) to ACN **Org Harne
 human-created issues become **Org work items** (`POST /api/v1/orgs/{id}/work`),
 not Task Pool tasks. Inbound `task.*` webhooks remain as a **legacy** mirror.
 
-**Package:** `@acnlabs/paperclip-plugin-acn` ≥ 0.3.1  
+**Package:** `@acnlabs/paperclip-plugin-acn` ≥ 0.3.2  
 
 **Org ↔ Task Pool (optional, ACN issue tab):** Import Task → Org work; Publish
 network Task with `metadata.org_id`. Spec:

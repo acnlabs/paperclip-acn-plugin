@@ -1,5 +1,5 @@
 export const PLUGIN_ID = "acnlabs.acn";
-export const PLUGIN_VERSION = "0.3.1";
+export const PLUGIN_VERSION = "0.3.2";
 
 export const WEBHOOK_KEYS = {
   acnEvents: "acn-events",
