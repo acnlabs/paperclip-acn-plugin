@@ -13,6 +13,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   success criteria, troubleshooting; ACN design docs as deep links.
 - Link ACN Org × Paperclip quickstart from README / SKILL.
 
+## [0.3.3] - 2026-07-24
+
+### Added
+
+- **Periodic Org work sync** (default on): polls ACN Org work every 2 minutes
+  so local Paperclip works with hosted ACN **without** a public webhook URL.
+  Startup one-shot sync + Issue tab **Sync now**.
+- Auto-use `PAPERCLIP_PUBLIC_URL` when `paperclipBaseUrl` is empty (realtime
+  push when the host already exposes a public origin).
+- Inbound status banner + richer `onHealth` (`push` / `poll` mode).
+
+### Changed
+
+- Harness registration failure against loopback is no longer a hard ERROR —
+  plugin logs that periodic sync covers inbound instead.
+- `paperclipBaseUrl` is optional; described as public URL for faster push only.
+- Poll sync only creates Issues for **open** Org work (skips terminal history)
+  and only applies **forward** terminal status (`done`/`cancelled`) — never
+  downgrades Paperclip `in_progress` / local `done`.
+
 ## [0.3.2] - 2026-07-24
 
 ### Added

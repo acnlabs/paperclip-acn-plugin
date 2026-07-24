@@ -103,6 +103,15 @@ export class AcnOrgApi {
     return this.client.updateWork(orgId, workId, opts);
   }
 
+  listWork(
+    orgId: string,
+    opts?: { openOnly?: boolean },
+  ): Promise<OrgWorkItem[]> {
+    return this.client
+      .listWork(orgId, { openOnly: opts?.openOnly })
+      .then((res) => res.work ?? []);
+  }
+
   /**
    * Import a Task Pool task as Org work (ACN org-task-bridge-v0).
    * Not yet on `acn-client` — raw HTTP until SDK grows the method.

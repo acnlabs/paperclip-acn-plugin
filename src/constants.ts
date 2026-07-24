@@ -1,8 +1,13 @@
 export const PLUGIN_ID = "acnlabs.acn";
-export const PLUGIN_VERSION = "0.3.2";
+export const PLUGIN_VERSION = "0.3.3";
 
 export const WEBHOOK_KEYS = {
   acnEvents: "acn-events",
+} as const;
+
+export const JOB_KEYS = {
+  /** Periodic Org work → Issue sync (poll fallback / safety net). */
+  orgWorkSync: "org-work-sync",
 } as const;
 
 export const SLOT_IDS = {
