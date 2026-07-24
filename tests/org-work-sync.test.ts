@@ -91,7 +91,7 @@ describe("syncOrgWorkFromAcn", () => {
     assert.equal(map.work_1, "iss-new");
   });
 
-  it("updates Issue when ACN status diverges", async () => {
+  it("updates Issue when ACN reaches terminal and Issue is still open", async () => {
     const { ctx, issues, companyId } = makeCtx({
       workMap: { work_1: "iss-1" },
       issueStatus: "todo",
@@ -125,6 +125,45 @@ describe("syncOrgWorkFromAcn", () => {
           org_id: "org_test",
           title: "Done",
           status: "done",
+        },
+      ]),
+    } as unknown as AcnOrgApi;
+
+    const stats = await syncOrgWorkFromAcn(ctx, cfg, orgApi, companyId);
+    assert.equal(stats.updated, 0);
+    assert.equal(issues.update.calls.length, 0);
+  });
+
+  it("does not backfill terminal unmapped work", async () => {
+    const { ctx, issues, companyId } = makeCtx();
+    const orgApi = {
+      listWork: spy(async () => [
+        {
+          work_id: "work_old",
+          org_id: "org_test",
+          title: "Ancient",
+          status: "done",
+        },
+      ]),
+    } as unknown as AcnOrgApi;
+
+    const stats = await syncOrgWorkFromAcn(ctx, cfg, orgApi, companyId);
+    assert.equal(stats.created, 0);
+    assert.equal(issues.create.calls.length, 0);
+  });
+
+  it("does not downgrade Paperclip in_progress when ACN is still todo", async () => {
+    const { ctx, issues, companyId } = makeCtx({
+      workMap: { work_1: "iss-1" },
+      issueStatus: "in_progress",
+    });
+    const orgApi = {
+      listWork: spy(async () => [
+        {
+          work_id: "work_1",
+          org_id: "org_test",
+          title: "Still open on ACN",
+          status: "todo",
         },
       ]),
     } as unknown as AcnOrgApi;

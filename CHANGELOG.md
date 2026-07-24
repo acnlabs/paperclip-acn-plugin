@@ -29,6 +29,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Harness registration failure against loopback is no longer a hard ERROR —
   plugin logs that periodic sync covers inbound instead.
 - `paperclipBaseUrl` is optional; described as public URL for faster push only.
+- Poll sync only creates Issues for **open** Org work (skips terminal history)
+  and only applies **forward** terminal status (`done`/`cancelled`) — never
+  downgrades Paperclip `in_progress` / local `done`.
 
 ## [0.3.2] - 2026-07-24
 

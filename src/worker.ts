@@ -694,10 +694,30 @@ export async function handleOrgLoopTick(
   _lastLoopTickCommentAt = now;
 }
 
+/** Open Org work — safe to auto-create Issues for on poll (never terminal history). */
+function isOpenOrgWorkStatus(status: string): boolean {
+  return status === "todo" || status === "in_progress";
+}
+
+/**
+ * Poll may only move Issues forward to ACN terminal states.
+ * Never force `todo` over Paperclip `in_progress` / `done` / etc.
+ */
+function shouldPollApplyStatus(acnStatus: string, issueStatus: string): boolean {
+  if (acnStatus !== "done" && acnStatus !== "cancelled") return false;
+  if (!issueStatus || issueStatus === acnStatus) return false;
+  // Already past this terminal on Paperclip — leave alone.
+  if (issueStatus === "done" || issueStatus === "cancelled") return false;
+  return true;
+}
+
 /**
  * Pull Org work from ACN and reconcile Paperclip Issues.
  * Used as poll fallback (no public webhook) and as a safety net when push works.
  * Idempotent: create/update handlers skip already-mapped / unchanged rows.
+ *
+ * Guards: do not backfill terminal (done/cancelled) unmapped work; do not
+ * downgrade Paperclip statuses via poll.
  */
 export async function syncOrgWorkFromAcn(
   ctx: PluginContext,
@@ -718,9 +738,12 @@ export async function syncOrgWorkFromAcn(
   for (const work of items) {
     const workId = (work.work_id ?? "").trim();
     if (!workId) continue;
+    const status = String(work.status ?? "");
     const data = orgWorkToEventData(work);
 
     if (!workMap[workId]) {
+      // Avoid Issue floods when enabling poll on an Org with history.
+      if (!isOpenOrgWorkStatus(status)) continue;
       await handleOrgWorkCreated(ctx, cfg, companyId, data);
       const afterMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
       if (afterMap[workId]) {
@@ -730,18 +753,13 @@ export async function syncOrgWorkFromAcn(
       continue;
     }
 
-    const status = String(work.status ?? "");
-    // Avoid comment spam on poll: only reconcile terminal/todo when Issue differs.
-    if (status !== "todo" && status !== "done" && status !== "cancelled") {
-      continue;
-    }
     const issueId = workMap[workId];
     try {
       const issue = await ctx.issues.get(issueId, companyId);
       const issueStatus = String(
         (issue as { status?: string } | null | undefined)?.status ?? "",
       );
-      if (issueStatus === status) continue;
+      if (!shouldPollApplyStatus(status, issueStatus)) continue;
       await handleOrgWorkUpdated(ctx, cfg, companyId, data);
       updated += 1;
     } catch (err) {
