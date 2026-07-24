@@ -13,6 +13,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   success criteria, troubleshooting; ACN design docs as deep links.
 - Link ACN Org × Paperclip quickstart from README / SKILL.
 
+## [0.3.2] - 2026-07-24
+
+### Added
+
+- **Org-paid publish** on the Issue ACN tab: checkbox **Pay from Org wallet**
+  + reward field. Calls `POST /orgs/{id}/publish-task` with `pay_from_org`
+  (credits escrow when reward &gt; 0; treasury only). Spec:
+  [org-wallet-v0](https://github.com/acnlabs/ACN/blob/main/docs/org-harness/org-wallet-v0.md).
+
+### Changed
+
+- Publish path uses Org `publish-task` API (not `/tasks/agent/create`).
+
 ## [0.3.1] - 2026-07-23
 
 ### Added

@@ -373,22 +373,34 @@ function PublishTaskPanel({
   const [title, setTitle] = useState(defaultTitle ?? "");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
+  const [reward, setReward] = useState("0");
+  const [payFromOrg, setPayFromOrg] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [taskId, setTaskId] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    task_id?: string;
+    creator_type?: string;
+    use_escrow?: boolean;
+  } | null>(null);
   const publishTask = usePluginAction("acn-publish-task");
 
   async function handlePublish() {
     setPending(true);
     setError(null);
-    setTaskId(null);
+    setResult(null);
     try {
       const res = (await publishTask({
         title: title.trim(),
         description: description.trim(),
         tags: tags.trim(),
-      })) as { task_id?: string };
-      setTaskId(res.task_id ?? null);
+        reward: reward.trim() || "0",
+        pay_from_org: payFromOrg,
+      })) as {
+        task_id?: string;
+        creator_type?: string;
+        use_escrow?: boolean;
+      };
+      setResult(res);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Publish failed");
     } finally {
@@ -401,7 +413,7 @@ function PublishTaskPanel({
       <div style={styles.sectionTitle}>Publish to ACN network</div>
       <div style={styles.muted}>
         Create a Task Pool task attributed to this Org (does not create Org work).
-        Network-visible by default — see ACN org-task-bridge-v0.
+        Default: agent attribution. Optional: pay from Org wallet (credits escrow).
       </div>
       <input
         style={styles.input}
@@ -424,12 +436,45 @@ function PublishTaskPanel({
         onChange={(e) => setTags(e.target.value)}
         disabled={pending || !orgId}
       />
+      <input
+        style={styles.input}
+        placeholder="Reward (credits when Org pays; default 0)"
+        value={reward}
+        onChange={(e) => setReward(e.target.value)}
+        disabled={pending || !orgId}
+      />
+      <label
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          fontSize: "12px",
+          marginTop: "6px",
+          color: "#374151",
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={payFromOrg}
+          onChange={(e) => setPayFromOrg(e.target.checked)}
+          disabled={pending || !orgId}
+        />
+        Pay from Org wallet (treasury only; fund via Backend org-wallets)
+      </label>
+      {payFromOrg && (
+        <div style={{ ...styles.muted, marginTop: "4px" }}>
+          Requires Org Credits balance. Caller must be Org owner / created_by.
+          Reward &gt; 0 locks escrow from the Org wallet.
+        </div>
+      )}
       {error && (
         <div style={{ color: "#dc2626", fontSize: "12px", marginTop: "4px" }}>{error}</div>
       )}
-      {taskId && (
+      {result?.task_id && (
         <div style={{ color: "#16a34a", fontSize: "12px", marginTop: "4px" }}>
-          Published <span style={styles.mono}>{taskId}</span>
+          Published <span style={styles.mono}>{result.task_id}</span>
+          {result.creator_type ? ` · creator=${result.creator_type}` : ""}
+          {result.use_escrow ? " · escrow" : ""}
         </div>
       )}
       <div style={styles.actionRow}>
@@ -439,7 +484,7 @@ function PublishTaskPanel({
           disabled={pending || !orgId}
           onClick={() => void handlePublish()}
         >
-          {pending ? "Publishing…" : "Publish task"}
+          {pending ? "Publishing…" : payFromOrg ? "Publish (Org pays)" : "Publish task"}
         </button>
       </div>
     </div>
@@ -489,7 +534,10 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
               orgId={data?.org_id}
               onDone={() => setReloadToken((n) => n + 1)}
             />
-            <PublishTaskPanel orgId={data?.org_id} />
+            <PublishTaskPanel
+              orgId={data?.org_id}
+              defaultTitle={data?.title ?? undefined}
+            />
           </>
         )}
       </div>
@@ -519,7 +567,10 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
             status when autoApproveOnDone is enabled (done) or always (cancelled).
           </div>
         )}
-        <PublishTaskPanel orgId={data.org_id} />
+        <PublishTaskPanel
+          orgId={data.org_id}
+          defaultTitle={data.title ?? undefined}
+        />
       </div>
     );
   }

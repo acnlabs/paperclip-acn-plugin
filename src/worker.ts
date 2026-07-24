@@ -1176,6 +1176,8 @@ const plugin = definePlugin({
       const title = String(params.title ?? "").trim();
       const description = String(params.description ?? "").trim();
       const tagsRaw = String(params.tags ?? "").trim();
+      const reward = String(params.reward ?? "0").trim() || "0";
+      const payFromOrg = Boolean(params.pay_from_org);
       if (title.length < 3) throw new Error("title must be at least 3 characters");
       if (description.length < 10) {
         throw new Error("description must be at least 10 characters");
@@ -1187,21 +1189,35 @@ const plugin = definePlugin({
       if (required_tags.length === 0) {
         throw new Error("tags required (comma-separated skill tags)");
       }
+      if (payFromOrg) {
+        const n = Number(reward);
+        if (!Number.isFinite(n) || n < 0) {
+          throw new Error("reward must be a non-negative number when paying from Org");
+        }
+      }
 
       const task = await orgApi.publishTaskForOrg(orgId, {
         title,
         description,
         required_tags,
+        reward,
+        pay_from_org: payFromOrg,
       });
       ctx.logger.info("acn-plugin: published Org task to network", {
         task_id: task.task_id,
         org_id: orgId,
+        pay_from_org: payFromOrg,
+        creator_type: task.creator_type,
       });
       return {
         ok: true,
         task_id: task.task_id,
         org_id: orgId,
         status: task.status,
+        creator_type: task.creator_type ?? (payFromOrg ? "org" : "agent"),
+        reward_currency: task.reward_currency,
+        use_escrow: Boolean(task.use_escrow),
+        pay_from_org: payFromOrg,
       };
     });
 

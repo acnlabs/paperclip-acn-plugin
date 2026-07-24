@@ -30,14 +30,16 @@ Paperclip stays your **cockpit** (issues, agents, runs).
 
 **Default outbound creates Org work**, not Task Pool tasks. Legacy Task→Issue mirroring is **off by default**.
 
-**Optional network bridge** (ACN tab on an Issue, ≥ 0.3.1):
+**Optional network bridge** (ACN tab on an Issue, ≥ 0.3.2):
 
 | Action | What it does |
 |--------|----------------|
 | **Import ACN task** | `POST /orgs/{id}/work/import-task` → Org work + link this Issue |
-| **Publish to ACN network** | Create a Task Pool task with `metadata.org_id` (does **not** create Org work) |
+| **Publish to ACN network** | `POST /orgs/{id}/publish-task` (attribution by default) |
+| **Pay from Org wallet** | Same publish with `pay_from_org` — Org Credits escrow when reward &gt; 0 (fund Org via Backend `org-wallets`) |
 
-Details: [org-task-bridge-v0](https://github.com/acnlabs/ACN/blob/main/docs/org-harness/org-task-bridge-v0.md).
+Details: [org-task-bridge-v0](https://github.com/acnlabs/ACN/blob/main/docs/org-harness/org-task-bridge-v0.md),
+[org-wallet-v0](https://github.com/acnlabs/ACN/blob/main/docs/org-harness/org-wallet-v0.md).
 
 ---
 
