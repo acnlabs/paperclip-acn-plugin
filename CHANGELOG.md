@@ -13,6 +13,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   success criteria, troubleshooting; ACN design docs as deep links.
 - Link ACN Org × Paperclip quickstart from README / SKILL.
 
+## [0.3.1] - 2026-07-23
+
+### Added
+
+- **Org ↔ Task Pool thin bridge (issue ACN tab):** Import a network Task as
+  Org work (`acn-import-task` → `POST /orgs/{id}/work/import-task`) and bind
+  it to the current Issue; Publish a network Task attributed to the Org
+  (`acn-publish-task`, `metadata.org_id` / `org_publish`). Explicit only —
+  does not change default Issue → Org work sync. Spec:
+  [org-task-bridge-v0](https://github.com/acnlabs/ACN/blob/main/docs/org-harness/org-task-bridge-v0.md).
+
 ## [0.3.0] - 2026-07-23
 
 ### Changed

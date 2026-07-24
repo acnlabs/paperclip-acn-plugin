@@ -1095,7 +1095,20 @@ const plugin = definePlugin({
 
       const map = await loadMap(ctx, STATE_KEYS.issueTaskMap, cid);
       const taskId = reverseLookup(map, issueId);
-      if (!taskId) return null;
+      if (!taskId) {
+        // Unlinked — still return org_id so the tab can offer import/publish.
+        return {
+          source: "unlinked",
+          work_id: null,
+          org_id: cfg.acnOrgId ?? null,
+          task_id: null,
+          title: null,
+          status: null,
+          reward: null,
+          reward_currency: null,
+          participations: [],
+        };
+      }
 
       const [task, participations] = await Promise.all([
         client.getTask(taskId),
@@ -1122,6 +1135,74 @@ const plugin = definePlugin({
       const feedback = params.feedback as string | undefined;
       await client.reviewTask(taskId, approved, feedback);
       return { ok: true };
+    });
+
+    // Org ↔ Task Pool thin bridge (org-task-bridge-v0) — explicit only.
+    ctx.actions.register("acn-import-task", async (params) => {
+      const taskId = String(params.taskId ?? "").trim();
+      const issueId = String(params.issueId ?? "").trim();
+      const cid = String(params.companyId ?? "").trim();
+      const orgId = (cfg.acnOrgId ?? "").trim();
+      if (!taskId) throw new Error("taskId is required");
+      if (!orgId) throw new Error("acnOrgId is not configured");
+      if (!cid || !issueId) throw new Error("issueId and companyId are required");
+
+      const work = await orgApi.importWorkFromTask(orgId, { task_id: taskId });
+      const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, cid);
+      if (!workMap[work.work_id]) {
+        workMap[work.work_id] = issueId;
+        await saveMap(ctx, STATE_KEYS.issueWorkMap, cid, workMap);
+      }
+      noteRecentOutboundWork(work.work_id);
+      ctx.logger.info("acn-plugin: imported task as Org work", {
+        task_id: taskId,
+        work_id: work.work_id,
+        issue_id: issueId,
+        org_id: orgId,
+        already_imported: Boolean(work.already_imported),
+      });
+      return {
+        ok: true,
+        work_id: work.work_id,
+        org_id: orgId,
+        task_id: taskId,
+        already_imported: Boolean(work.already_imported),
+      };
+    });
+
+    ctx.actions.register("acn-publish-task", async (params) => {
+      const orgId = (cfg.acnOrgId ?? "").trim();
+      if (!orgId) throw new Error("acnOrgId is not configured");
+      const title = String(params.title ?? "").trim();
+      const description = String(params.description ?? "").trim();
+      const tagsRaw = String(params.tags ?? "").trim();
+      if (title.length < 3) throw new Error("title must be at least 3 characters");
+      if (description.length < 10) {
+        throw new Error("description must be at least 10 characters");
+      }
+      const required_tags = tagsRaw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (required_tags.length === 0) {
+        throw new Error("tags required (comma-separated skill tags)");
+      }
+
+      const task = await orgApi.publishTaskForOrg(orgId, {
+        title,
+        description,
+        required_tags,
+      });
+      ctx.logger.info("acn-plugin: published Org task to network", {
+        task_id: task.task_id,
+        org_id: orgId,
+      });
+      return {
+        ok: true,
+        task_id: task.task_id,
+        org_id: orgId,
+        status: task.status,
+      };
     });
 
     ctx.logger.info("acn-plugin: setup complete", {

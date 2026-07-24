@@ -8,8 +8,8 @@ import {
 // ── Types shared with worker bridge ──────────────────────────────────────────
 
 export interface AcnTaskInfo {
-  /** Org Harness work path vs legacy Task Pool mirror. */
-  source?: "org_work" | "task_pool";
+  /** Org Harness work path, legacy Task Pool mirror, or not yet linked. */
+  source?: "org_work" | "task_pool" | "unlinked";
   work_id?: string | null;
   org_id?: string | null;
   task_id: string | null;
@@ -146,6 +146,17 @@ const styles = {
     padding: "1px 5px",
     borderRadius: "3px",
   } as React.CSSProperties,
+
+  input: {
+    width: "100%",
+    borderRadius: "6px",
+    border: "1px solid var(--color-border-default, #ccc)",
+    padding: "6px 8px",
+    fontSize: "12px",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+    marginTop: "4px",
+  } as React.CSSProperties,
 } as const;
 
 // ── Status badge ──────────────────────────────────────────────────────────────
@@ -274,16 +285,178 @@ function ReviewPanel({
   );
 }
 
+// ── Import Task → Org work ────────────────────────────────────────────────────
+
+function ImportTaskPanel({
+  issueId,
+  companyId,
+  orgId,
+  onDone,
+}: {
+  issueId: string;
+  companyId: string;
+  orgId: string | null | undefined;
+  onDone: () => void;
+}) {
+  const [taskId, setTaskId] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+  const importTask = usePluginAction("acn-import-task");
+
+  async function handleImport() {
+    setPending(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = (await importTask({
+        taskId: taskId.trim(),
+        issueId,
+        companyId,
+      })) as { work_id?: string; already_imported?: boolean };
+      setResult(
+        res.already_imported
+          ? `Already linked to ${res.work_id ?? "work"}`
+          : `Imported as ${res.work_id ?? "work"}`,
+      );
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionTitle}>Import ACN task</div>
+      <div style={styles.muted}>
+        Pull a network Task into this Org as work and link it to this Issue
+        {orgId ? <> (<span style={styles.mono}>{orgId}</span>)</> : null}.
+      </div>
+      <input
+        style={styles.input}
+        placeholder="task_…"
+        value={taskId}
+        onChange={(e) => setTaskId(e.target.value)}
+        disabled={pending || !orgId}
+      />
+      {error && (
+        <div style={{ color: "#dc2626", fontSize: "12px", marginTop: "4px" }}>{error}</div>
+      )}
+      {result && (
+        <div style={{ color: "#16a34a", fontSize: "12px", marginTop: "4px" }}>{result}</div>
+      )}
+      <div style={styles.actionRow}>
+        <button
+          type="button"
+          style={{ ...styles.btn("approve"), opacity: pending || !orgId ? 0.6 : 1 }}
+          disabled={pending || !orgId || taskId.trim().length < 3}
+          onClick={() => void handleImport()}
+        >
+          {pending ? "Importing…" : "Import task"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Publish Issue context → network Task ──────────────────────────────────────
+
+function PublishTaskPanel({
+  orgId,
+  defaultTitle,
+}: {
+  orgId: string | null | undefined;
+  defaultTitle?: string;
+}) {
+  const [title, setTitle] = useState(defaultTitle ?? "");
+  const [description, setDescription] = useState("");
+  const [tags, setTags] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [taskId, setTaskId] = useState<string | null>(null);
+  const publishTask = usePluginAction("acn-publish-task");
+
+  async function handlePublish() {
+    setPending(true);
+    setError(null);
+    setTaskId(null);
+    try {
+      const res = (await publishTask({
+        title: title.trim(),
+        description: description.trim(),
+        tags: tags.trim(),
+      })) as { task_id?: string };
+      setTaskId(res.task_id ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Publish failed");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionTitle}>Publish to ACN network</div>
+      <div style={styles.muted}>
+        Create a Task Pool task attributed to this Org (does not create Org work).
+        Network-visible by default — see ACN org-task-bridge-v0.
+      </div>
+      <input
+        style={styles.input}
+        placeholder="Title (min 3 chars)"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        disabled={pending || !orgId}
+      />
+      <textarea
+        style={styles.textarea}
+        placeholder="Description (min 10 chars)"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        disabled={pending || !orgId}
+      />
+      <input
+        style={styles.input}
+        placeholder="Tags (comma-separated, e.g. review,typescript)"
+        value={tags}
+        onChange={(e) => setTags(e.target.value)}
+        disabled={pending || !orgId}
+      />
+      {error && (
+        <div style={{ color: "#dc2626", fontSize: "12px", marginTop: "4px" }}>{error}</div>
+      )}
+      {taskId && (
+        <div style={{ color: "#16a34a", fontSize: "12px", marginTop: "4px" }}>
+          Published <span style={styles.mono}>{taskId}</span>
+        </div>
+      )}
+      <div style={styles.actionRow}>
+        <button
+          type="button"
+          style={{ ...styles.btn("neutral"), opacity: pending || !orgId ? 0.6 : 1 }}
+          disabled={pending || !orgId}
+          onClick={() => void handlePublish()}
+        >
+          {pending ? "Publishing…" : "Publish task"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main ACN Issue Tab ────────────────────────────────────────────────────────
 
 export function ACNIssueTab({ context }: PluginDetailTabProps) {
   const issueId = context.entityId;
   const companyId = context.companyId;
   const [reviewDone, setReviewDone] = useState(false);
+  const [reloadToken, setReloadToken] = useState(0);
 
   const { data, loading, error } = usePluginData<AcnTaskInfo | null>(
     "acn-task-info",
-    issueId && companyId ? { issueId, companyId } : {},
+    issueId && companyId ? { issueId, companyId, reloadToken } : {},
   );
 
   if (!issueId) {
@@ -302,10 +475,23 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
     );
   }
 
-  if (!data) {
+  if (!data || data.source === "unlinked") {
     return (
       <div style={styles.container}>
-        <span style={styles.muted}>This issue is not linked to ACN work or a task.</span>
+        <span style={styles.muted}>
+          This issue is not linked to ACN work or a Task Pool task.
+        </span>
+        {companyId && (
+          <>
+            <ImportTaskPanel
+              issueId={issueId}
+              companyId={companyId}
+              orgId={data?.org_id}
+              onDone={() => setReloadToken((n) => n + 1)}
+            />
+            <PublishTaskPanel orgId={data?.org_id} />
+          </>
+        )}
       </div>
     );
   }
@@ -333,6 +519,7 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
             status when autoApproveOnDone is enabled (done) or always (cancelled).
           </div>
         )}
+        <PublishTaskPanel orgId={data.org_id} />
       </div>
     );
   }

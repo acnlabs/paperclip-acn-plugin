@@ -28,7 +28,16 @@ Paperclip stays your **cockpit** (issues, agents, runs).
 | Hard to share the same “org boundary” with other tools/agents | Same Org + subnet fence can be used by other ACN clients |
 | No signed inbound lifecycle from the network | Harness webhooks: `org.work_*` / `org.loop_tick` |
 
-**This is not** a Task Pool marketplace plugin. Outbound creates **Org work**, not `/tasks`. Legacy Task→Issue mirroring is **off by default**.
+**Default outbound creates Org work**, not Task Pool tasks. Legacy Task→Issue mirroring is **off by default**.
+
+**Optional network bridge** (ACN tab on an Issue, ≥ 0.3.1):
+
+| Action | What it does |
+|--------|----------------|
+| **Import ACN task** | `POST /orgs/{id}/work/import-task` → Org work + link this Issue |
+| **Publish to ACN network** | Create a Task Pool task with `metadata.org_id` (does **not** create Org work) |
+
+Details: [org-task-bridge-v0](https://github.com/acnlabs/ACN/blob/main/docs/org-harness/org-task-bridge-v0.md).
 
 ---
 
@@ -46,7 +55,8 @@ Then:
 1. Create a **human** Issue in Paperclip → ACN lists a matching work item.  
 2. (Optional) Create work with the bridge API key → a Paperclip Issue appears.  
 3. Mark the Issue `done` (with `autoApproveOnDone`) → work becomes `done`.  
-4. Open the issue **ACN** tab → see `work_id` / Org id.
+4. Open the issue **ACN** tab → see `work_id` / Org id.  
+5. (Optional) On an unlinked Issue: **Import ACN task** or **Publish to ACN network**.
 
 ---
 
