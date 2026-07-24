@@ -1399,6 +1399,13 @@ const plugin = definePlugin({
       };
     });
 
+    ctx.actions.register("acn-get-org-wallet", async () => {
+      const orgId = (cfg.acnOrgId ?? "").trim();
+      if (!orgId) throw new Error("acnOrgId is not configured");
+      const wallet = await orgApi.getOrgWallet(orgId);
+      return { ok: true, ...wallet };
+    });
+
     ctx.actions.register("acn-publish-task", async (params) => {
       const orgId = (cfg.acnOrgId ?? "").trim();
       if (!orgId) throw new Error("acnOrgId is not configured");

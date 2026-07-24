@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   usePluginAction,
   usePluginData,
@@ -401,7 +401,47 @@ function PublishTaskPanel({
     creator_type?: string;
     use_escrow?: boolean;
   } | null>(null);
+  const [walletLabel, setWalletLabel] = useState<string | null>(null);
+  const [walletErr, setWalletErr] = useState<string | null>(null);
   const publishTask = usePluginAction("acn-publish-task");
+  const getOrgWallet = usePluginAction("acn-get-org-wallet");
+
+  useEffect(() => {
+    if (!payFromOrg || !orgId) {
+      setWalletLabel(null);
+      setWalletErr(null);
+      return;
+    }
+    let cancelled = false;
+    setWalletLabel("Loading Org balance…");
+    setWalletErr(null);
+    void (async () => {
+      try {
+        const w = (await getOrgWallet({})) as {
+          exists?: boolean;
+          balance?: number;
+          status?: string | null;
+        };
+        if (cancelled) return;
+        const bal = Number(w.balance ?? 0);
+        const status = w.status ? ` · ${w.status}` : "";
+        setWalletLabel(
+          w.exists === false
+            ? `Org Credits: 0 (no wallet yet)${status}`
+            : `Org Credits: ${bal}${status}`,
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setWalletLabel(null);
+        setWalletErr(
+          err instanceof Error ? err.message : "Could not load Org wallet",
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [payFromOrg, orgId, getOrgWallet]);
 
   async function handlePublish() {
     setPending(true);
@@ -478,12 +518,19 @@ function PublishTaskPanel({
           onChange={(e) => setPayFromOrg(e.target.checked)}
           disabled={pending || !orgId}
         />
-        Pay from Org wallet (treasury only; fund via Backend org-wallets)
+        Pay from Org wallet (treasury only)
       </label>
       {payFromOrg && (
         <div style={{ ...styles.muted, marginTop: "4px" }}>
-          Requires Org Credits balance. Caller must be Org owner / created_by.
-          Reward &gt; 0 locks escrow from the Org wallet.
+          {walletLabel ??
+            "Requires Org Credits. Caller must be Org owner / created_by."}
+          {walletErr ? (
+            <div style={{ color: "#b45309", marginTop: "2px" }}>{walletErr}</div>
+          ) : null}
+          <div style={{ marginTop: "2px" }}>
+            Reward &gt; 0 locks escrow from the Org wallet. Fund via Backend
+            org-wallets (topup) until in-plugin topup ships.
+          </div>
         </div>
       )}
       {error && (

@@ -61,6 +61,17 @@ export type OrgPublishedTask = {
   metadata?: Record<string, unknown>;
 };
 
+/** ACN `GET /orgs/{id}/wallet` (org-wallet-v0 S6). */
+export type OrgWalletSummary = {
+  org_id: string;
+  exists: boolean;
+  wallet_id?: string | null;
+  balance: number;
+  owner_id?: string | null;
+  spend_autonomy?: string | null;
+  status?: string | null;
+};
+
 export class AcnOrgApi {
   private readonly client: ACNClient;
   private readonly baseUrl: string;
@@ -162,6 +173,28 @@ export class AcnOrgApi {
         fence: Boolean(opts.fence),
       },
     );
+  }
+
+  /** Treasury-gated Org wallet summary (ACN → Backend proxy). */
+  getOrgWallet(orgId: string): Promise<OrgWalletSummary> {
+    return this.getJson<OrgWalletSummary>(
+      `/api/v1/orgs/${encodeURIComponent(orgId)}/wallet`,
+    );
+  }
+
+  private async getJson<T>(path: string): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        Accept: "application/json",
+      },
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new AcnHttpError("GET", path, res.status, text);
+    }
+    return JSON.parse(text) as T;
   }
 
   private async postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
