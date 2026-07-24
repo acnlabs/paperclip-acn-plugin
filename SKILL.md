@@ -5,7 +5,7 @@ license: MIT
 compatibility: "Required: a self-hosted Paperclip instance with plugin worker enabled (Paperclip SDK >= 2026.512.0), HTTPS access to an ACN instance (defaults to https://api.acnlabs.dev). Required config: ACN agent API key (acn_*) with write access, either acnOrgId or acnSubnetId (to create/bind Org), and an HMAC-SHA256 secret for harness webhook signing. Load the ACN skill when the user does not yet have credentials."
 metadata:
   author: acnlabs
-  version: "0.3.2"
+  version: "0.3.3"
   npm: "@acnlabs/paperclip-plugin-acn"
   homepage: "https://github.com/acnlabs/paperclip-acn-plugin"
   repository: "https://github.com/acnlabs/paperclip-acn-plugin"
@@ -20,7 +20,7 @@ Bridges [Paperclip](https://github.com/paperclipai/paperclip) to ACN **Org Harne
 human-created issues become **Org work items** (`POST /api/v1/orgs/{id}/work`),
 not Task Pool tasks. Inbound `task.*` webhooks remain as a **legacy** mirror.
 
-**Package:** `@acnlabs/paperclip-plugin-acn` ≥ 0.3.2  
+**Package:** `@acnlabs/paperclip-plugin-acn` ≥ 0.3.3  
 
 **Org ↔ Task Pool (optional, ACN issue tab):** Import Task → Org work; Publish
 network Task with `metadata.org_id`. Spec:
@@ -68,17 +68,20 @@ paperclipai secrets set acn_harness_secret "$HARNESS_SECRET"
 #   acnHarnessSecretRef = acn_harness_secret
 #   acnSubnetId         = $SUBNET_ID   # plugin will POST /orgs once if acnOrgId empty
 #   # OR set acnOrgId = org_… for an existing Org
-#   paperclipBaseUrl    = https://<your-paperclip>
+#   paperclipBaseUrl    = optional public URL (or PAPERCLIP_PUBLIC_URL)
 #   acnBaseUrl          = blank (global) or https://acn.acnlabs.cn
+#   enableOrgWorkPoll   = true (default) — local OK without public URL
 ```
 
 Expect setup logs:
 
 ```
 acn-plugin: created ACN Org for company { org_id: "org_…", subnet_id: "…" }
-# or: reusing / configured org
-acn-plugin: registered harness { subnet_id: "…", org_id: "…", signed: true }
-acn-plugin: setup complete { org_id: "…", subnet_id: "…" }
+# Local + hosted ACN:
+acn-plugin: realtime push not configured — periodic sync will cover inbound
+acn-plugin: setup complete { …, inbound: { mode: "poll" } }
+# Or with a public URL:
+acn-plugin: registered harness (realtime push) { …, signed: true }
 ```
 
 Copy the logged `org_id` into `acnOrgId` for stable restarts.
@@ -93,9 +96,10 @@ Copy the logged `org_id` into `acnOrgId` for stable restarts.
 | `acnOrgId` | recommended | Existing `org_…`. Empty → create Org bound to `acnSubnetId` |
 | `acnSubnetId` | yes if no Org | Fence subnet; also used when creating Org |
 | `acnHarnessSecretRef` | strongly recommended | HMAC for inbound harness webhooks |
-| `paperclipBaseUrl` | strongly recommended | Public Paperclip URL for webhook registration |
+| `paperclipBaseUrl` | no | Public URL for realtime push; else `PAPERCLIP_PUBLIC_URL`; local OK without |
 | `acnBaseUrl` | no | Default `https://api.acnlabs.dev` |
-| `autoCreateIssues` | no (default `true`) | Inbound `org.work_created` → create Issue |
+| `autoCreateIssues` | no (default `true`) | Inbound Org work → create Issue |
+| `enableOrgWorkPoll` | no (default `true`) | Periodic Org work sync |
 | `enableLegacyTaskMirror` | no (default `false`) | Opt-in: `task.created` + startup Task sync → Issue |
 | `autoApproveOnDone` | no | Issue done → Org work PATCH (or legacy Task `/review`) |
 

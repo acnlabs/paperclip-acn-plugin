@@ -9,15 +9,25 @@
  *                   create gated by enableLegacyTaskMirror; mapped lifecycle always)
  *  P0-4  PC→ACN   : Paperclip issue done/cancelled → ACN task review (legacy mapped)
  *  P2c-C1 PC→ACN  : Paperclip issue created → Org work (NOT Task Pool)
- *  P2c-C2 ACN→PC  : org.work_* / org.loop_tick → Issues (preferred inbound)
+ *  P2c-C2 ACN→PC  : org.work_* / org.loop_tick → Issues (push + poll)
  *  P2c-C3 PC→ACN  : Paperclip issue done/cancelled → PATCH Org work status
  */
 
 import type { PluginContext, PluginEvent } from "@paperclipai/plugin-sdk";
 import { definePlugin, runWorker } from "@paperclipai/plugin-sdk";
 import { ACNClient, type Task } from "acn-client";
-import { PLUGIN_ID, STATE_KEYS, WEBHOOK_KEYS } from "./constants.js";
-import { ACNError, AcnOrgApi, orgSubnetId } from "./lib/org-api.js";
+import { JOB_KEYS, PLUGIN_ID, STATE_KEYS, WEBHOOK_KEYS } from "./constants.js";
+import {
+  ACNError,
+  AcnOrgApi,
+  orgSubnetId,
+  type OrgWorkItem,
+} from "./lib/org-api.js";
+import {
+  resolvePaperclipPublicBaseUrl,
+  shouldAttemptHarnessRegister,
+  type HarnessSkipReason,
+} from "./lib/public-base-url.js";
 import { verifyAcnSignature } from "./lib/signature.js";
 import { shouldSkipPluginEcho } from "./lib/echo-guard.js";
 import { resolveSecretOrLiteral } from "./lib/secrets.js";
@@ -39,12 +49,29 @@ export interface PluginConfig {
    */
   autoCreateIssues?: boolean;
   /**
+   * Poll ACN Org work periodically (default true). Keeps local Paperclip in
+   * sync without a public webhook URL; also acts as a safety net when push works.
+   */
+  enableOrgWorkPoll?: boolean;
+  /**
    * Opt-in legacy Task Pool → Issue mirror: `task.created` create + startup
    * `syncTasks`. Mapped `task.*` lifecycle / review still work when false.
    * Default false — prefer Org `org.*` inbound.
    */
   enableLegacyTaskMirror?: boolean;
   autoApproveOnDone?: boolean;
+}
+
+/** How ACN→Paperclip Org work inbound is delivered. */
+export type InboundMode = "push" | "poll" | "off";
+
+export interface InboundStatus {
+  mode: InboundMode;
+  push: boolean;
+  poll: boolean;
+  publicBaseUrl: string | null;
+  harnessReason: HarnessSkipReason | "ok" | "register_failed";
+  message: string;
 }
 
 function legacyTaskMirrorEnabled(cfg: PluginConfig): boolean {
@@ -99,8 +126,21 @@ interface AcnHarnessEventPayload {
 let _ctx: PluginContext | null = null;
 let _cfg: PluginConfig | null = null;
 let _client: ACNClient | null = null;
+let _companyId: string | null = null;
 /** Resolved HMAC secret for verifying X-ACN-Signature on inbound webhooks. */
 let _harnessSecret: string | null = null;
+let _inboundStatus: InboundStatus = {
+  mode: "off",
+  push: false,
+  poll: false,
+  publicBaseUrl: null,
+  harnessReason: "missing_base_url",
+  message: "ACN plugin not set up yet",
+};
+
+function orgWorkPollEnabled(cfg: PluginConfig): boolean {
+  return cfg.enableOrgWorkPoll !== false;
+}
 /**
  * ACN agent_id of the API key the plugin is configured with. Used to detect
  * — and skip — webhook events fired for tasks the plugin itself just
@@ -347,10 +387,33 @@ function buildClient(cfg: PluginConfig, apiKey: string): ACNClient {
 }
 
 /** Construct the Paperclip webhook URL for ACN harness registration. */
-function harnessWebhookUrl(cfg: PluginConfig): string | null {
-  if (!cfg.paperclipBaseUrl) return null;
-  const base = cfg.paperclipBaseUrl.replace(/\/$/, "");
+function harnessWebhookUrl(publicBaseUrl: string): string | null {
+  const base = publicBaseUrl.trim().replace(/\/$/, "");
+  if (!base) return null;
   return `${base}/api/plugins/${PLUGIN_ID}/webhooks/${WEBHOOK_KEYS.acnEvents}`;
+}
+
+function inboundUserMessage(opts: {
+  push: boolean;
+  poll: boolean;
+  reason: HarnessSkipReason | "ok" | "register_failed";
+}): string {
+  if (opts.push && opts.poll) {
+    return "Realtime push on; periodic sync as backup.";
+  }
+  if (opts.push) {
+    return "Realtime push on.";
+  }
+  if (opts.poll) {
+    if (opts.reason === "private_or_loopback" || opts.reason === "missing_base_url") {
+      return "Using periodic sync (works without a public Paperclip URL).";
+    }
+    if (opts.reason === "register_failed") {
+      return "Realtime push unavailable; using periodic sync.";
+    }
+    return "Using periodic sync.";
+  }
+  return "Inbound Org sync is off.";
 }
 
 // ── Issue body helpers ────────────────────────────────────────────────────────
@@ -629,6 +692,78 @@ export async function handleOrgLoopTick(
     return;
   }
   _lastLoopTickCommentAt = now;
+}
+
+/**
+ * Pull Org work from ACN and reconcile Paperclip Issues.
+ * Used as poll fallback (no public webhook) and as a safety net when push works.
+ * Idempotent: create/update handlers skip already-mapped / unchanged rows.
+ */
+export async function syncOrgWorkFromAcn(
+  ctx: PluginContext,
+  cfg: PluginConfig,
+  orgApi: AcnOrgApi,
+  companyId: string,
+): Promise<{ created: number; updated: number; listed: number }> {
+  const orgId = configuredOrgId(cfg);
+  if (!orgId) {
+    return { created: 0, updated: 0, listed: 0 };
+  }
+
+  const items = await orgApi.listWork(orgId, { openOnly: false });
+  const workMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+  let created = 0;
+  let updated = 0;
+
+  for (const work of items) {
+    const workId = (work.work_id ?? "").trim();
+    if (!workId) continue;
+    const data = orgWorkToEventData(work);
+
+    if (!workMap[workId]) {
+      await handleOrgWorkCreated(ctx, cfg, companyId, data);
+      const afterMap = await loadMap(ctx, STATE_KEYS.issueWorkMap, companyId);
+      if (afterMap[workId]) {
+        created += 1;
+        workMap[workId] = afterMap[workId];
+      }
+      continue;
+    }
+
+    const status = String(work.status ?? "");
+    // Avoid comment spam on poll: only reconcile terminal/todo when Issue differs.
+    if (status !== "todo" && status !== "done" && status !== "cancelled") {
+      continue;
+    }
+    const issueId = workMap[workId];
+    try {
+      const issue = await ctx.issues.get(issueId, companyId);
+      const issueStatus = String(
+        (issue as { status?: string } | null | undefined)?.status ?? "",
+      );
+      if (issueStatus === status) continue;
+      await handleOrgWorkUpdated(ctx, cfg, companyId, data);
+      updated += 1;
+    } catch (err) {
+      ctx.logger.warn("acn-plugin: poll sync skipped work (issue get failed)", {
+        work_id: workId,
+        issue_id: issueId,
+        error: String(err),
+      });
+    }
+  }
+
+  return { created, updated, listed: items.length };
+}
+
+function orgWorkToEventData(work: OrgWorkItem): AcnHarnessEventPayload["data"] {
+  return {
+    org_id: work.org_id,
+    work_id: work.work_id,
+    title: work.title,
+    status: String(work.status),
+    assignee_agent_id: work.assignee_agent_id ?? null,
+  };
 }
 
 // ── ACN webhook event handler ─────────────────────────────────────────────────
@@ -1006,10 +1141,11 @@ const plugin = definePlugin({
       return;
     }
 
-    // Stash for onWebhook()
+    // Stash for onWebhook() / jobs / health
     _ctx = ctx;
     _cfg = cfg;
     _client = client;
+    _companyId = companyId ?? null;
     _harnessSecret = harnessSecret;
 
     // Legacy task.* echo guard (inbound Task mirror still active).
@@ -1025,26 +1161,68 @@ const plugin = definePlugin({
       });
     }
 
-    // ── P0-1  Register harness webhook ────────────────────────────────────────
-    const webhookUrl = harnessWebhookUrl(cfg);
+    // ── P0-1  Register harness webhook (optional realtime push) ───────────────
+    const publicBase = resolvePaperclipPublicBaseUrl({
+      paperclipBaseUrl: cfg.paperclipBaseUrl,
+    });
     const subnetId = (cfg.acnSubnetId ?? "").trim();
-    if (webhookUrl && subnetId) {
+    const pollOn = orgWorkPollEnabled(cfg);
+    let pushOn = false;
+    let harnessReason: HarnessSkipReason | "ok" | "register_failed" = "missing_base_url";
+
+    const gate = shouldAttemptHarnessRegister({
+      acnBaseUrl: cfg.acnBaseUrl,
+      publicBaseUrl: publicBase,
+    });
+    const webhookUrl = gate.attempt ? harnessWebhookUrl(publicBase) : null;
+
+    if (!subnetId) {
+      ctx.logger.warn(
+        "acn-plugin: no subnet_id after Org resolve — skipping harness registration",
+      );
+      harnessReason = gate.reason ?? "missing_base_url";
+    } else if (!gate.attempt) {
+      harnessReason = gate.reason ?? "missing_base_url";
+      ctx.logger.info("acn-plugin: realtime push not configured — periodic sync will cover inbound", {
+        reason: harnessReason,
+        hint:
+          harnessReason === "private_or_loopback"
+            ? "Local Paperclip + hosted ACN: leave as-is, or set PAPERCLIP_PUBLIC_URL / a tunnel URL for faster push."
+            : "Optional: set Paperclip public URL (or PAPERCLIP_PUBLIC_URL) for realtime ACN→Paperclip push.",
+      });
+    } else if (webhookUrl) {
       try {
         await client.registerSubnetHarness(subnetId, webhookUrl, harnessSecret);
-        ctx.logger.info("acn-plugin: registered harness", {
+        pushOn = true;
+        harnessReason = "ok";
+        ctx.logger.info("acn-plugin: registered harness (realtime push)", {
           subnet_id: subnetId,
           org_id: cfg.acnOrgId,
           webhook_url: webhookUrl,
           signed: harnessSecret !== null,
         });
       } catch (err) {
-        ctx.logger.error("acn-plugin: harness registration failed", { error: String(err) });
+        harnessReason = "register_failed";
+        ctx.logger.warn(
+          "acn-plugin: realtime push unavailable — using periodic Org work sync",
+          { error: String(err) },
+        );
       }
-    } else if (!webhookUrl) {
-      ctx.logger.warn("acn-plugin: paperclipBaseUrl not set — skipping harness registration");
-    } else {
-      ctx.logger.warn("acn-plugin: no subnet_id after Org resolve — skipping harness registration");
     }
+
+    const mode: InboundMode = pushOn ? "push" : pollOn ? "poll" : "off";
+    _inboundStatus = {
+      mode,
+      push: pushOn,
+      poll: pollOn,
+      publicBaseUrl: publicBase || null,
+      harnessReason,
+      message: inboundUserMessage({
+        push: pushOn,
+        poll: pollOn,
+        reason: harnessReason,
+      }),
+    };
 
     // ── P0-2  Full initial task sync (legacy; opt-in) ─────────────────────────
     if (companyId && subnetId && legacyTaskMirrorEnabled(cfg)) {
@@ -1071,7 +1249,40 @@ const plugin = definePlugin({
       await handleIssueCreated(ctx, cfg, orgApi, event);
     });
 
+    // ── Periodic Org work sync (poll fallback / safety net) ───────────────────
+    ctx.jobs.register(JOB_KEYS.orgWorkSync, async (job) => {
+      if (!orgWorkPollEnabled(cfg)) {
+        ctx.logger.debug("acn-plugin: org-work-sync skipped — enableOrgWorkPoll=false");
+        return;
+      }
+      const cid = _companyId ?? (await ctx.companies.list())[0]?.id;
+      if (!cid) {
+        ctx.logger.warn("acn-plugin: org-work-sync skipped — no company");
+        return;
+      }
+      const stats = await syncOrgWorkFromAcn(ctx, cfg, orgApi, cid);
+      ctx.logger.info("acn-plugin: org-work-sync", {
+        trigger: job.trigger,
+        ...stats,
+        inbound_mode: _inboundStatus.mode,
+      });
+    });
+
+    // One-shot reconcile at startup so local setups are not empty until first cron.
+    if (pollOn && companyId) {
+      try {
+        const stats = await syncOrgWorkFromAcn(ctx, cfg, orgApi, companyId);
+        ctx.logger.info("acn-plugin: startup Org work sync", stats);
+      } catch (err) {
+        ctx.logger.warn("acn-plugin: startup Org work sync failed", {
+          error: String(err),
+        });
+      }
+    }
+
     // ── Bridge: getData for ACN tab ────────────────────────────────────────────
+    ctx.data.register("acn-inbound-status", async () => _inboundStatus);
+
     ctx.data.register("acn-task-info", async (params) => {
       const issueId = params.issueId as string | undefined;
       const cid = params.companyId as string | undefined;
@@ -1221,14 +1432,26 @@ const plugin = definePlugin({
       };
     });
 
+    ctx.actions.register("acn-sync-org-work", async () => {
+      const cid = _companyId ?? (await ctx.companies.list())[0]?.id;
+      if (!cid) throw new Error("No Paperclip company available");
+      const stats = await syncOrgWorkFromAcn(ctx, cfg, orgApi, cid);
+      return { ok: true, ...stats, inbound: _inboundStatus };
+    });
+
     ctx.logger.info("acn-plugin: setup complete", {
       org_id: cfg.acnOrgId,
       subnet_id: cfg.acnSubnetId,
+      inbound: _inboundStatus,
     });
   },
 
   async onHealth() {
-    return { status: "ok", message: "ACN plugin running" };
+    return {
+      status: "ok" as const,
+      message: _inboundStatus.message,
+      details: { ..._inboundStatus } as Record<string, unknown>,
+    };
   },
 
   // ── P0-3  Inbound ACN webhook events ──────────────────────────────────────────

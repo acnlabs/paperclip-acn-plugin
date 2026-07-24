@@ -45,19 +45,25 @@ Details: [org-task-bridge-v0](https://github.com/acnlabs/ACN/blob/main/docs/org-
 
 ## Success looks like
 
-After setup, in **Plugins → ACN → Logs**:
+After setup, in **Plugins → ACN → Logs** you should see `setup complete` with an
+`inbound` mode:
 
 ```text
-acn-plugin: registered harness { …, signed: true }
-acn-plugin: setup complete { org_id: "org_…", subnet_id: "…" }
+# Local Paperclip + hosted ACN (no public URL) — still OK:
+acn-plugin: realtime push not configured — periodic sync will cover inbound
+acn-plugin: setup complete { …, inbound: { mode: "poll", … } }
+
+# Or, when a public URL is available:
+acn-plugin: registered harness (realtime push) { …, signed: true }
 ```
 
 Then:
 
 1. Create a **human** Issue in Paperclip → ACN lists a matching work item.  
-2. (Optional) Create work with the bridge API key → a Paperclip Issue appears.  
+2. (Optional) Create work with the bridge API key → a Paperclip Issue appears
+   (within ~2 min via poll, or immediately with realtime push).  
 3. Mark the Issue `done` (with `autoApproveOnDone`) → work becomes `done`.  
-4. Open the issue **ACN** tab → see `work_id` / Org id.  
+4. Open the issue **ACN** tab → see `work_id` / Org id + inbound status.  
 5. (Optional) On an unlinked Issue: **Import ACN task** or **Publish to ACN network**.
 
 ---
@@ -69,8 +75,9 @@ Then:
 - Paperclip with **plugin worker** enabled  
 - An ACN agent API key (`acn_…`) that will own the Org fence (**this key is governance** — only it can create Org work while the Org is unclaimed)  
 - A subnet that agent owns (or let setup create an Org on `acnSubnetId`)  
-- A public **Paperclip URL** ACN can reach (for inbound webhooks)  
-- An HMAC secret: `openssl rand -hex 32`
+- An HMAC secret: `openssl rand -hex 32`  
+- (Optional) A public Paperclip URL — only needed for **realtime** ACN→Paperclip
+  push; local setups use periodic sync by default
 
 Default ACN: `https://api.acnlabs.dev` (CN: set `acnBaseUrl` to `https://acn.acnlabs.cn`).
 
@@ -94,7 +101,7 @@ paperclipai secrets set acn_harness_secret "$(openssl rand -hex 32)"
 | `acnApiKeyRef` | `acn_api_key` |
 | `acnHarnessSecretRef` | `acn_harness_secret` |
 | `acnSubnetId` | your subnet slug *(or set `acnOrgId` if Org already exists)* |
-| `paperclipBaseUrl` | `https://your-paperclip.example` |
+| `paperclipBaseUrl` | optional public origin (or set `PAPERCLIP_PUBLIC_URL`) |
 
 Recommended for first try: `autoApproveOnDone=true`. Leave `enableLegacyTaskMirror=false`.
 
@@ -125,12 +132,13 @@ Restart the plugin worker. Copy logged `org_id` into `acnOrgId` for stable resta
 | Field | Required | Description |
 |-------|----------|-------------|
 | `acnApiKeyRef` | yes | Secret ref → `acn_…` |
-| `paperclipBaseUrl` | strongly recommended | Public Paperclip origin for harness registration |
+| `paperclipBaseUrl` | no | Public origin for realtime push; else `PAPERCLIP_PUBLIC_URL`; local OK without |
 | `acnHarnessSecretRef` | strongly recommended | HMAC for `X-ACN-Signature` |
 | `acnSubnetId` | yes if no Org | Fence subnet; used to `POST /orgs` when `acnOrgId` empty |
 | `acnOrgId` | recommended | Existing `org_…` |
 | `acnBaseUrl` | no | Default `https://api.acnlabs.dev` |
-| `autoCreateIssues` | no (default `true`) | Inbound `org.work_created` → Issue |
+| `autoCreateIssues` | no (default `true`) | Inbound Org work → Issue |
+| `enableOrgWorkPoll` | no (default `true`) | Periodic Org work sync (local-friendly) |
 | `autoApproveOnDone` | no (default `false`) | Issue done → PATCH work `done` |
 | `enableLegacyTaskMirror` | no (default `false`) | Opt-in Task Pool → Issue |
 
@@ -140,10 +148,11 @@ Restart the plugin worker. Copy logged `org_id` into `acnOrgId` for stable resta
 
 | Symptom | Check |
 |---------|--------|
-| No `registered harness` | `paperclipBaseUrl` reachable from ACN; subnet/Org resolved |
+| No `registered harness` | Expected on local Paperclip + hosted ACN — use poll mode / **Sync now** |
+| Want realtime push | Set public `paperclipBaseUrl` or host `PAPERCLIP_PUBLIC_URL` (tunnel OK) |
 | `signed: false` | Set `acnHarnessSecretRef` |
 | Issue does not create work | Human-created? `acnOrgId` set? Worker logs |
-| Work does not create Issue | Harness URL + HMAC; `autoCreateIssues` |
+| Work does not create Issue | Wait ~2 min or **Sync now**; `autoCreateIssues`; check inbound banner |
 | `403` creating work | Wrong API key — need governance (`created_by` / owner) |
 | Done does not sync | `autoApproveOnDone`; issue in `issue-work-map` |
 

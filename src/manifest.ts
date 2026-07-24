@@ -1,6 +1,7 @@
 import type { PaperclipPluginManifestV1 } from "@paperclipai/plugin-sdk";
 import {
   EXPORT_NAMES,
+  JOB_KEYS,
   PLUGIN_ID,
   PLUGIN_VERSION,
   SLOT_IDS,
@@ -38,6 +39,7 @@ const manifest: PaperclipPluginManifestV1 = {
     "plugin.state.write",
     "ui.detailTab.register",
     "instance.settings.register",
+    "jobs.schedule",
   ],
 
   instanceConfigSchema: {
@@ -52,10 +54,10 @@ const manifest: PaperclipPluginManifestV1 = {
       },
       paperclipBaseUrl: {
         type: "string",
-        title: "Paperclip Base URL",
+        title: "Paperclip public URL (optional)",
         default: "",
         description:
-          "Public base URL of this Paperclip instance (e.g. https://app.paperclip.ai). Used to construct the ACN harness webhook URL.",
+          "Optional. Public HTTPS origin of this Paperclip for realtime ACN→Paperclip push. Leave empty for local use — periodic sync still works. Falls back to PAPERCLIP_PUBLIC_URL env when set.",
       },
       acnApiKeyRef: {
         type: "string",
@@ -90,7 +92,14 @@ const manifest: PaperclipPluginManifestV1 = {
         title: "Auto-create Paperclip issues for inbound Org work",
         default: true,
         description:
-          "When true, external org.work_created webhooks create a Paperclip Issue. Does not control Task Pool mirroring.",
+          "When true, external Org work (push or periodic sync) creates a Paperclip Issue. Does not control Task Pool mirroring.",
+      },
+      enableOrgWorkPoll: {
+        type: "boolean",
+        title: "Periodic Org work sync",
+        default: true,
+        description:
+          "Keep Issues in sync by polling ACN Org work every few minutes. On by default so local Paperclip works without a public URL. Realtime push is used automatically when a public URL is available.",
       },
       enableLegacyTaskMirror: {
         type: "boolean",
@@ -115,6 +124,16 @@ const manifest: PaperclipPluginManifestV1 = {
       displayName: "ACN Harness Events",
       description:
         "Receives HMAC-signed lifecycle events from ACN (org.work_* / org.loop_tick preferred; task.* legacy).",
+    },
+  ],
+
+  jobs: [
+    {
+      jobKey: JOB_KEYS.orgWorkSync,
+      displayName: "Sync Org work → Issues",
+      description:
+        "Pulls ACN Org work into Paperclip Issues (fallback when realtime push is unavailable; safety net when push is on).",
+      schedule: "*/2 * * * *",
     },
   ],
 

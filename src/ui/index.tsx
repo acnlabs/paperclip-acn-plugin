@@ -28,6 +28,15 @@ export interface AcnTaskInfo {
   }>;
 }
 
+export interface AcnInboundStatus {
+  mode: "push" | "poll" | "off";
+  push: boolean;
+  poll: boolean;
+  publicBaseUrl: string | null;
+  harnessReason: string;
+  message: string;
+}
+
 // ── Minimal inline styles (no Tailwind dependency) ────────────────────────────
 
 const styles = {
@@ -145,6 +154,16 @@ const styles = {
     background: "var(--color-bg-subtle, #f0f0f0)",
     padding: "1px 5px",
     borderRadius: "3px",
+  } as React.CSSProperties,
+
+  banner: {
+    marginBottom: "12px",
+    padding: "8px 10px",
+    borderRadius: "6px",
+    background: "var(--color-bg-subtle, #f4f4f5)",
+    fontSize: "12px",
+    lineHeight: 1.4,
+    color: "var(--color-fg-muted, #555)",
   } as React.CSSProperties,
 
   input: {
@@ -491,6 +510,38 @@ function PublishTaskPanel({
   );
 }
 
+function InboundBanner({ status }: { status: AcnInboundStatus | null | undefined }) {
+  const syncNow = usePluginAction("acn-sync-org-work");
+  const [busy, setBusy] = useState(false);
+  if (!status) return null;
+  return (
+    <div style={styles.banner}>
+      <div>{status.message}</div>
+      {status.poll && (
+        <button
+          type="button"
+          style={{
+            ...styles.btn("neutral"),
+            marginTop: "8px",
+            fontSize: "11px",
+            padding: "3px 10px",
+            opacity: busy ? 0.6 : 1,
+          }}
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            void syncNow({})
+              .catch(() => {})
+              .finally(() => setBusy(false));
+          }}
+        >
+          {busy ? "Syncing…" : "Sync now"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Main ACN Issue Tab ────────────────────────────────────────────────────────
 
 export function ACNIssueTab({ context }: PluginDetailTabProps) {
@@ -498,6 +549,11 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
   const companyId = context.companyId;
   const [reviewDone, setReviewDone] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
+
+  const { data: inbound } = usePluginData<AcnInboundStatus | null>(
+    "acn-inbound-status",
+    { reloadToken },
+  );
 
   const { data, loading, error } = usePluginData<AcnTaskInfo | null>(
     "acn-task-info",
@@ -515,6 +571,7 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
   if (error) {
     return (
       <div style={styles.container}>
+        <InboundBanner status={inbound} />
         <span style={{ color: "#dc2626" }}>Failed to load ACN data: {error.message}</span>
       </div>
     );
@@ -523,6 +580,7 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
   if (!data || data.source === "unlinked") {
     return (
       <div style={styles.container}>
+        <InboundBanner status={inbound} />
         <span style={styles.muted}>
           This issue is not linked to ACN work or a Task Pool task.
         </span>
@@ -548,6 +606,7 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
   if (data.source === "org_work" || data.work_id) {
     return (
       <div style={styles.container}>
+        <InboundBanner status={inbound} />
         <div style={styles.row}>
           <span style={styles.label}>ACN Work</span>
           <span style={styles.mono}>{data.work_id ?? "—"}</span>
@@ -590,6 +649,7 @@ export function ACNIssueTab({ context }: PluginDetailTabProps) {
 
   return (
     <div style={styles.container}>
+      <InboundBanner status={inbound} />
       {/* Task meta */}
       <div style={styles.row}>
         <span style={styles.label}>ACN Task</span>
