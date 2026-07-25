@@ -13,6 +13,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   success criteria, troubleshooting; ACN design docs as deep links.
 - Link ACN Org × Paperclip quickstart from README / SKILL.
 
+## [0.3.5] - 2026-07-25
+
+### Changed
+
+- Org-paid checkbox copy: clear **how to fund** (Backend `topup` /
+  `topup-internal`) and point at ACN quickstart § Org-paid; zero-balance
+  hint when wallet is empty.
+
 ## [0.3.4] - 2026-07-24
 
 ### Added

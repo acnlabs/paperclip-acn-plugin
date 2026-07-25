@@ -425,10 +425,11 @@ function PublishTaskPanel({
         if (cancelled) return;
         const bal = Number(w.balance ?? 0);
         const status = w.status ? ` · ${w.status}` : "";
+        const low = w.exists === false || bal <= 0;
         setWalletLabel(
           w.exists === false
             ? `Org Credits: 0 (no wallet yet)${status}`
-            : `Org Credits: ${bal}${status}`,
+            : `Org Credits: ${bal}${status}${low ? " — fund before Org-paid publish" : ""}`,
         );
       } catch (err) {
         if (cancelled) return;
@@ -528,8 +529,13 @@ function PublishTaskPanel({
             <div style={{ color: "#b45309", marginTop: "2px" }}>{walletErr}</div>
           ) : null}
           <div style={{ marginTop: "2px" }}>
-            Reward &gt; 0 locks escrow from the Org wallet. Fund via Backend
-            org-wallets (topup) until in-plugin topup ships.
+            Reward &gt; 0 locks escrow from the Org wallet. Caller must be Org
+            owner / created_by. Fund outside Paperclip: Backend{" "}
+            <span style={styles.mono}>
+              {"POST /api/org-wallets/{org_id}/topup"}
+            </span>{" "}
+            (human JWT) or <span style={styles.mono}>…/topup-internal</span>{" "}
+            (agent treasury + internal token). See ACN quickstart § Org-paid.
           </div>
         </div>
       )}
