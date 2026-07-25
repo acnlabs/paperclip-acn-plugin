@@ -13,6 +13,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   success criteria, troubleshooting; ACN design docs as deep links.
 - Link ACN Org × Paperclip quickstart from README / SKILL.
 
+## [0.3.4] - 2026-07-24
+
+### Added
+
+- Issue ACN tab shows **Org Credits** balance when **Pay from Org wallet** is
+  checked (`acn-get-org-wallet` → ACN `GET /orgs/{id}/wallet`).
+
 ## [0.3.3] - 2026-07-24
 
 ### Added
